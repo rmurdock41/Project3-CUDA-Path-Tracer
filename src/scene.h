@@ -13,9 +13,7 @@ using namespace std;
 class Scene {
 private:
     ifstream fp_in;
-    int loadMaterial(string materialid);
-    int loadGeom(string objectid);
-    int loadCamera();
+    void loadFromJSON(const std::string& jsonName);
 public:
     Scene(string filename);
     ~Scene();
