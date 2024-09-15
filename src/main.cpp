@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
 	startTimeString = currentTimeString();
 
 	if (argc < 2) {
-		printf("Usage: %s SCENEFILE.txt\n", argv[0]);
+		printf("Usage: %s SCENEFILE.json\n", argv[0]);
 		return 1;
 	}
 
