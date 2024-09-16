@@ -1,3 +1,5 @@
+#include "pathtrace.h"
+
 #include <cstdio>
 #include <cuda.h>
 #include <cmath>
@@ -10,7 +12,6 @@
 #include "glm/glm.hpp"
 #include "glm/gtx/norm.hpp"
 #include "utilities.h"
-#include "pathtrace.h"
 #include "intersections.h"
 #include "interactions.h"
 

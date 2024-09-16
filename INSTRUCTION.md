@@ -1,18 +1,18 @@
-# Proj 3 CUDA Path Tracer - Instructions
+# Project 3 CUDA Path Tracer - Instructions
 
-This is due **Tuesday October 3rd** at 11:59pm.
+This is due **Tuesday October 1st** at 11:59pm.
 
-This project involves a significant bit of running time to generate high-quality images, so be sure to take that into account. You will receive an additional 2 days (due Thursday, October 5th) for "README and Scene" only updates. However, the standard project requirements for READMEs still apply for the October 3th deadline. You may use these two extra days to improve your images, charts, performance analysis, etc.
+This project involves a significant bit of running time to generate high-quality images, so be sure to take that into account. You will receive an additional 2 days (due Thursday, October 3rd) for "README and Scene" only updates. However, the standard project requirements for READMEs still apply for the October 1st deadline. You may use these two extra days to improve your images, charts, performance analysis, etc.
 
 If you plan to use late days on this project (which we recommend), they will apply to the October 5th deadline. Once you have used your extra days and submitted the project, you will recieve the additional 2 days for "README and Scene" updates only.
 
-[Link to "Pathtracing Primer" Slides](https://1drv.ms/p/s!AiLXbdZHgbemhe96czmjQ4iKDm0Q1w?e=0mOYnL)
+[Link to "Pathtracing Primer" slides](https://docs.google.com/presentation/d/1pQU_qkxx9Pq9h2Y20tLvE7v7AwaA_6byvszXi9Y-K7A/edit?usp=drive_link)
 
 **Summary:**
 
 In this project, you'll implement a CUDA-based path tracer capable of rendering globally-illuminated images very quickly.  Since in this class we are concerned with working in GPU programming, performance, and the generation of actual beautiful images (and not with mundane programming tasks like I/O), this project includes base code for loading a scene description file, described below, and various other things that generally make up a framework for previewing and saving images.
 
-The core renderer is left for you to implement. Finally, note that, while this base code is meant to serve as a strong starting point for a CUDA path tracer, you are not required to use it if you don't want to. You may also change any part of the base code as you please. **This is YOUR project.**
+The core renderer is left for you to implement. Finally, note that, while this base code is meant to serve as a strong starting point for a CUDA path tracer, you are not required to use it if you don't want to. You may change any part of the base code as you please, or even start from scratch. **This is YOUR project.**
 
 **Recommendations:**
 
@@ -23,13 +23,13 @@ The core renderer is left for you to implement. Finally, note that, while this b
 ## Contents
 
 * `src/` C++/CUDA source files.
-* `scenes/` Example scene description files.
+* `scenes/` Example scene description JSON files.
 * `img/` Renders of example scene description files. (These probably won't match precisely with yours.)
 * `external/` Includes and static libraries for 3rd party libraries.
 
 ## Running the code
 
-The main function requires a scene description file. Call the program with one as an argument: `cis565_path_tracer scenes/sphere.txt`. (In Visual Studio, `../scenes/sphere.txt`.)
+The main function requires a scene description file. Call the program with one as an argument: `cis565_path_tracer scenes/sphere.json`. (In Visual Studio, `../scenes/sphere.json`.)
 
 If you are using Visual Studio, you can set this in the `Debugging > Command Arguments` section in the `Project Properties`. Make sure you get the path right - read the console for errors.
 
@@ -61,7 +61,7 @@ In this project, you are given code for:
 You will need to implement the following features:
 
 * A shading kernel with BSDF evaluation for:
-  * Ideal Diffuse surfaces (using provided cosine-weighted scatter function, see below.) [PBRT 8.3].
+  * Ideal Diffuse surfaces (using provided cosine-weighted scatter function, see below.) [PBRT 8.3](https://www.pbr-book.org/3ed-2018/Reflection_Models/Lambertian_Reflection).
   * Perfectly specular-reflective (mirrored) surfaces (e.g. using `glm::reflect`).
   * See notes on diffuse/specular in `scatterRay` and on imperfect specular below.
 * Path continuation/termination using Stream Compaction from Project 2.
@@ -69,7 +69,7 @@ You will need to implement the following features:
 implement a means of making rays/pathSegments/intersections contiguous in memory by material type. This should be easily toggleable.
   * Consider the problems with coloring every path segment in a buffer and performing BSDF evaluation using one big shading kernel: different materials/BSDF evaluations within the kernel will take different amounts of time to complete.
   * Sort the rays/path segments so that rays/paths interacting with the same material are contiguous in memory before shading. How does this impact performance? Why?
-* A toggleable option to cache the first bounce intersections for re-use across all subsequent iterations. Provide performance benefit analysis across different max ray depths.
+* Lastly, implement stochastic sampled antialiasing. See the "Stochastic Sampling" section in Paul Bourke's [notes](https://paulbourke.net/miscellaneous/raytracing/).
 
 ### Part 2 - Make Your Pathtracer Unique!
 
@@ -81,27 +81,26 @@ An example set of optional features is:
 
 * Mesh Loading - :four: points
 * Refraction - :two: points
-* Anti-aliasing - :two: points
+* Depth of field - :two: points
 * Final rays post processing - :three: points
 
 This list is not comprehensive. If you have a particular idea you would like to implement (e.g. acceleration structures, etc.), please post on Ed.
 
-**Extra credit**: implement more features on top of the above required ones, with point value up to +25/100 at the grader's discretion (based on difficulty and coolness), generally .
+**Extra credit**: implement more features on top of the above required ones, with point value up to +25/100 at the grader's discretion (based on difficulty and coolness), generally.
 
 #### Visual Improvements
 
-* :two: Refraction (e.g. glass/water) [PBRT 8.2] with Frensel effects using [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation) or more accurate methods [PBRT 8.5]. You can use `glm::refract` for Snell's law.
+* :two: Refraction (e.g. glass/water) [PBRT 8.2](https://www.pbr-book.org/3ed-2018/Reflection_Models/Specular_Reflection_and_Transmission) with Frensel effects using [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation) or more accurate methods [PBRT 8.5](https://www.pbr-book.org/3ed-2018/Reflection_Models/Fresnel_Incidence_Effects.html). You can use `glm::refract` for Snell's law.
   * Recommended but not required: non-perfect specular surfaces. (See below.)
-* :two: Physically-based depth-of-field (by jittering rays within an aperture). [PBRT 6.2.3]
-* :two: Stochastic Sampled Antialiasing. See Paul Bourke's [notes](http://paulbourke.net/miscellaneous/aliasing/). Keep in mind how this influences the first-bounce cache in part 1.
+* :two: Physically-based depth of field (by jittering rays within an aperture). [PBRT 6.2.3](https://www.pbr-book.org/3ed-2018/Camera_Models/Projective_Camera_Models#TheThinLensModelandDepthofField)
 * :four: Procedural Shapes & Textures.
   * You must generate a minimum of two different complex shapes procedurally. (Not primitives)
   * You must be able to shade object with a minimum of two different textures
-* :five: (:six: if combined with Arbitrary Mesh Loading) Texture mapping [PBRT 10.4] and Bump mapping [PBRT 9.3].
+* :five: (:six: if combined with Arbitrary Mesh Loading) Texture mapping [PBRT 10.4](https://www.pbr-book.org/3ed-2018/Texture/Image_Texture) and Bump mapping [PBRT 9.3](https://www.pbr-book.org/3ed-2018/Materials/Bump_Mapping).
   * Implement file-loaded textures AND a basic procedural texture
   * Provide a performance comparison between the two
-* :two: Direct lighting (by taking a final ray directly to a random point on an emissive object acting as a light source). Or more advanced [PBRT 15.1.1].
-* :four: Subsurface scattering [PBRT 5.6.2, 11.6].
+* :two: Direct lighting (by taking a final ray directly to a random point on an emissive object acting as a light source). Or more advanced [PBRT 15.1.1](https://pbr-book.org/3ed-2018/contents).
+* :four: Subsurface scattering [PBRT 5.6.2](https://pbr-book.org/3ed-2018/contents).
 * :three: [Better random number sequences for Monte Carlo ray tracing](https://cseweb.ucsd.edu/classes/sp17/cse168-a/CSE168_07_Random.pdf)
 * :three: Some method of defining object motion, and motion blur by averaging samples at different times in the animation.
 * :three: Use final rays to apply post-processing shaders. Please post your ideas on Piazza before starting.
@@ -154,9 +153,9 @@ For each specific optimization technique, please post on Ed Discussion so we can
 For each extra feature, you must provide the following analysis:
 
 * Overview write-up of the feature along with before/after images.
-* Performance impact of the feature
+* Performance impact of the feature.
 * If you did something to accelerate the feature, what did you do and why?
-* Compare your GPU version of the feature to a HYPOTHETICAL CPU version (you don't have to implement it!)? Does it benefit or suffer from being implemented on the GPU?
+* Compare your GPU version of the feature to a HYPOTHETICAL CPU version (you don't have to implement it!). Does it benefit or suffer from being implemented on the GPU?
 * How might this feature be optimized beyond your current implementation?
 
 ## Base Code Tour
@@ -166,18 +165,18 @@ You'll be working in the following files. Look for important parts of the code:
 * Search for `CHECKITOUT`.
 * You'll have to implement parts labeled with `TODO`. (But don't let these constrain you - you have free rein!)
 
-* `src/pathtrace.cu`: path tracing kernels, device functions, and calling code
+* `src/pathtrace.h`/`cu`: path tracing kernels, device functions, and calling code
   * `pathtraceInit` initializes the path tracer state - it should copy scene data (e.g. geometry, materials) from `Scene`.
   * `pathtraceFree` frees memory allocated by `pathtraceInit`
   * `pathtrace` performs one iteration of the rendering - it handles kernel launches, memory copies, transferring some data, etc.
     * See comments for a low-level path tracing recap.
-* `src/intersections.h`: ray intersection functions
+* `src/intersections.h`/`cu`: ray intersection functions
   * `boxIntersectionTest` and `sphereIntersectionTest`, which take in a ray and a geometry object and return various properties of the intersection.
-* `src/interactions.h`: ray scattering functions
+* `src/interactions.h`/`cu`: ray scattering functions
   * `calculateRandomDirectionInHemisphere`: a cosine-weighted random direction in a hemisphere. Needed for implementing diffuse surfaces.
   * `scatterRay`: this function should perform all ray scattering, and will call `calculateRandomDirectionInHemisphere`. See comments for details.
 * `src/main.cpp`: you don't need to do anything here, but you can change the program to save `.hdr` image files, if you want (for postprocessing).
-* `stream_compaction`: A dummy folder into which you should place your Stream Compaction implementation from Project 2. It should be sufficient to copy the files from [here](https://github.com/CIS565-Fall-2018/Project2-Stream-Compaction/tree/master/stream_compaction)
+* `stream_compaction`: A dummy folder into which you should place your Stream Compaction implementation from Project 2. It should be sufficient to copy the files from [here](https://github.com/CIS5650-Fall-2024/Project2-Stream-Compaction/tree/main/stream_compaction)
 
 ### Generating random numbers
 
@@ -202,7 +201,7 @@ Equations 7, 8, and 9 of [*GPU Gems 3*, Chapter 20](https://developer.nvidia.com
 
 Also see the notes in `scatterRay` for probability splits between diffuse/specular/other material types.
 
-See also: PBRT 8.2.2.
+See also: [PBRT 8.2.2](https://www.pbr-book.org/3ed-2018/Reflection_Models/Specular_Reflection_and_Transmission).
 
 ### Hierarchical spatial datastructures
 
@@ -323,8 +322,8 @@ The template of the comment section of your pull request is attached below, you 
 
 ## References
 
-* [PBRT] Physically Based Rendering, Second Edition: From Theory To Implementation. Pharr, Matt and Humphreys, Greg. 2010.
-* Antialiasing and Raytracing. Chris Cooksey and Paul Bourke, http://paulbourke.net/miscellaneous/aliasing/
+* [PBRT](https://pbr-book.org/3ed-2018/contents) Physically Based Rendering, Third Edition: From Theory To Implementation. Pharr, Matt and Humphreys, Greg. 2018.
+* Antialiasing and Raytracing. Chris Cooksey and Paul Bourke, https://paulbourke.net/miscellaneous/raytracing/
 * [Sampling notes](http://graphics.ucsd.edu/courses/cse168_s14/) from Steve Rotenberg and Matteo Mannino, University of California, San Diego, CSE168: Rendering Algorithms
 * Path Tracer Readme Samples (non-exhaustive list):
   * https://github.com/byumjin/Project3-CUDA-Path-Tracer
