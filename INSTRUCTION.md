@@ -61,12 +61,12 @@ In this project, you are given code for:
 You will need to implement the following features:
 
 * A shading kernel with BSDF evaluation for:
-  * Ideal Diffuse surfaces (using provided cosine-weighted scatter function, see below.) [PBRT 8.3].
+  * Ideal Diffuse surfaces (using provided cosine-weighted scatter function, see below.) [PBRTv4 9.2].
   * Perfectly specular-reflective (mirrored) surfaces (e.g. using `glm::reflect`).
   * See notes on diffuse/specular in `scatterRay` and on imperfect specular below.
 * Path continuation/termination using Stream Compaction from Project 2.
 * After you have a [basic pathtracer up and running](img/REFERENCE_cornell.5000samp.png),
-implement a means of making rays/pathSegments/intersections contiguous in memory by material type. This should be easily toggleable.
+  implement a means of making rays/pathSegments/intersections contiguous in memory by material type. This should be easily toggleable.
   * Consider the problems with coloring every path segment in a buffer and performing BSDF evaluation using one big shading kernel: different materials/BSDF evaluations within the kernel will take different amounts of time to complete.
   * Sort the rays/path segments so that rays/paths interacting with the same material are contiguous in memory before shading. How does this impact performance? Why?
 * A toggleable option to cache the first bounce intersections for re-use across all subsequent iterations. Provide performance benefit analysis across different max ray depths.
@@ -90,18 +90,18 @@ This list is not comprehensive. If you have a particular idea you would like to 
 
 #### Visual Improvements
 
-* :two: Refraction (e.g. glass/water) [PBRT 8.2] with Frensel effects using [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation) or more accurate methods [PBRT 8.5]. You can use `glm::refract` for Snell's law.
+* :two: Refraction (e.g. glass/water) [PBRTv4 9.3] with Frensel effects using [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick's_approximation) or more accurate methods [PBRTv4 9.5]. You can use `glm::refract` for Snell's law.
   * Recommended but not required: non-perfect specular surfaces. (See below.)
-* :two: Physically-based depth-of-field (by jittering rays within an aperture). [PBRT 6.2.3]
+* :two: Physically-based depth-of-field (by jittering rays within an aperture). [PBRTv4 5.2.3]
 * :two: Stochastic Sampled Antialiasing. See Paul Bourke's [notes](http://paulbourke.net/miscellaneous/aliasing/). Keep in mind how this influences the first-bounce cache in part 1.
 * :four: Procedural Shapes & Textures.
   * You must generate a minimum of two different complex shapes procedurally. (Not primitives)
   * You must be able to shade object with a minimum of two different textures
-* :five: (:six: if combined with Arbitrary Mesh Loading) Texture mapping [PBRT 10.4] and Bump mapping [PBRT 9.3].
+* :five: (:six: if combined with Arbitrary Mesh Loading) Texture mapping [PBRTv4 10.4] and Bump mapping [PBRTv3 9.3].
   * Implement file-loaded textures AND a basic procedural texture
   * Provide a performance comparison between the two
-* :two: Direct lighting (by taking a final ray directly to a random point on an emissive object acting as a light source). Or more advanced [PBRT 15.1.1].
-* :four: Subsurface scattering [PBRT 5.6.2, 11.6].
+* :two: Direct lighting by taking a final ray directly to a random point on an emissive object acting as a light source). Or more advanced [PBRTv4 13.4].
+* :four: Subsurface scattering [PBRTv3 5.6.2, 11.4].
 * :three: [Better random number sequences for Monte Carlo ray tracing](https://cseweb.ucsd.edu/classes/sp17/cse168-a/CSE168_07_Random.pdf)
 * :three: Some method of defining object motion, and motion blur by averaging samples at different times in the animation.
 * :three: Use final rays to apply post-processing shaders. Please post your ideas on Piazza before starting.
@@ -228,41 +228,78 @@ By default, your GPU driver will probably kill a CUDA kernel if it runs for more
 
 > Note: The Scene File Format and sample scene files are provided as a starting point. You are encouraged to create your own unique scene files, or even modify the scene file format in its entirety. Be sure to document any changes in your readme.
 
-This project uses a custom scene description format. Scene files are flat text files that describe all geometry, materials, lights, cameras, and render settings inside of the scene. Items in the format are delimited by new lines, and comments can be added using C-style `// comments`.
+This project uses a JSON-based scene description format to define all components of a scene, such as materials, objects, lights, and camera settings. The scene file is structured as a JSON object with clearly organized sections for different elements, providing a clean and extendable format.
 
-Materials are defined in the following fashion:
+### Materials
 
-* MATERIAL (material ID) //material header
-* RGB (float r) (float g) (float b) //diffuse color
-* SPECX (float specx) //specular exponent
-* SPECRGB (float r) (float g) (float b) //specular color
-* REFL (bool refl) //reflectivity flag, 0 for no, 1 for yes
-* REFR (bool refr) //refractivity flag, 0 for no, 1 for yes
-* REFRIOR (float ior) //index of refraction for Fresnel effects
-* EMITTANCE (float emittance) //the emittance strength of the material. Material is a light source iff emittance > 0.
+Materials are defined under the `"Materials"` section. Each material have a unique name and belongs to a material type such as `"Diffuse"`, `"Specular"`, or `"Emitting"`.
 
-Cameras are defined in the following fashion:
+For each type of material, it can have different properties such as:
 
-* CAMERA //camera header
-* RES (float x) (float y) //resolution
-* FOVY (float fovy) //vertical field of view half-angle. the horizonal angle is calculated from this and the reslution
-* ITERATIONS (float interations) //how many iterations to refine the image
-* DEPTH (int depth) //maximum depth (number of times the path will bounce)
-* FILE (string filename) //file to output render to upon completion
-* EYE (float x) (float y) (float z) //camera's position in worldspace
-* LOOKAT (float x) (float y) (float z) //point in space that the camera orbits around and points at
-* UP (float x) (float y) (float z) //camera's up vector
+- `"RGB"`: An array of three float values defining the material’s color.
+- `"EMITTANCE"`: A float value for emissive materials, which defines the light emission strength (optional, present only for emitting materials).
+- `"ROUGHNESS"`: A float value indicating surface roughness, used for specular materials.
 
-Objects are defined in the following fashion:
+Example:
 
-* OBJECT (object ID) //object header
-* (cube OR sphere OR mesh) //type of object, can be either "cube", "sphere", or "mesh". Note that cubes and spheres are unit sized and centered at the origin.
-* material (material ID) //material to assign this object
-* TRANS (float transx) (float transy) (float transz) //translation
-* ROTAT (float rotationx) (float rotationy) (float rotationz) //rotation
-* SCALE (float scalex) (float scaley) (float scalez) //scale
+```
+"diffuse_red": {
+    "TYPE": "Diffuse",
+    "RGB": [0.85, 0.35, 0.35]
+}
+```
 
-Two examples are provided in the `scenes/` directory: a single emissive sphere, and a simple cornell box made using cubes for walls and lights and a sphere in the middle. You may want to add to this file for features you implement. (DOF, Anti-aliasing, etc...)
+### Camera
+
+The camera configuration is defined in the `"Camera"` section. It includes settings for resolution, field of view, iterations for rendering, and camera orientation.
+
+- `"RES"`: An array representing the resolution of the output image in pixels.
+- `"FOVY"`: The vertical field of view, in degrees.
+- `"ITERATIONS"`: The number of iterations to refine the image during rendering.
+- `"DEPTH"`: The maximum path tracing depth.
+- `"FILE"`: The filename for the rendered output.
+- `"EYE"`: The position of the camera in world coordinates.
+- `"LOOKAT"`: The point in space the camera is directed at.
+- `"UP"`: The up vector defining the camera's orientation.
+
+Example:
+
+```
+"Camera": {
+    "RES": [800, 800],
+    "FOVY": 45.0,
+    "ITERATIONS": 5000,
+    "DEPTH": 8,
+    "FILE": "cornell",
+    "EYE": [0.0, 5.0, 10.5],
+    "LOOKAT": [0.0, 5.0, 0.0],
+    "UP": [0.0, 1.0, 0.0]
+}
+```
+
+### Objects
+
+Objects in the scene are defined as an array of entries under the `"Objects"` section. Each object contains:
+
+- `"TYPE"`: The type of object, such as `"cube"` or `"sphere"`.
+- `"MATERIAL"`: The material assigned to the object, referencing one of the materials defined earlier.
+- `"TRANS"`: An array for the translation (position) of the object.
+- `"ROTAT"`: An array for the rotation of the object in degrees.
+- `"SCALE"`: An array for the scale of the object.
+
+Example:
+
+```
+{
+    "TYPE": "cube",
+    "MATERIAL": "diffuse_red",
+    "TRANS": [-5.0, 5.0, 0.0],
+    "ROTAT": [0.0, 0.0, 0.0],
+    "SCALE": [0.01, 10.0, 10.0]
+}
+```
+
+This JSON format is flexible and can be easily extended to accommodate new features, such as additional material properties or object types.
 
 ## Third-Party Code Policy
 
@@ -323,7 +360,8 @@ The template of the comment section of your pull request is attached below, you 
 
 ## References
 
-* [PBRT] Physically Based Rendering, Second Edition: From Theory To Implementation. Pharr, Matt and Humphreys, Greg. 2010.
+* [PBRTv3] [Physically Based Rendering: From Theory to Implementation (pbr-book.org)](https://www.pbr-book.org/3ed-2018/contents)
+* [PBRTv4] [Physically Based Rendering: From Theory to Implementation (pbr-book.org)](https://pbr-book.org/4ed/contents)
 * Antialiasing and Raytracing. Chris Cooksey and Paul Bourke, http://paulbourke.net/miscellaneous/aliasing/
 * [Sampling notes](http://graphics.ucsd.edu/courses/cse168_s14/) from Steve Rotenberg and Matteo Mannino, University of California, San Diego, CSE168: Rendering Algorithms
 * Path Tracer Readme Samples (non-exhaustive list):
