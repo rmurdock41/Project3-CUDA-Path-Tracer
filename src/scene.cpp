@@ -7,7 +7,8 @@
 #include <unordered_map>
 using json = nlohmann::json;
 
-Scene::Scene(string filename) {
+Scene::Scene(string filename)
+{
     cout << "Reading scene from " << filename << " ..." << endl;
     cout << " " << endl;
     auto ext = filename.substr(filename.find_last_of('.'));
@@ -112,5 +113,3 @@ void Scene::loadFromJSON(const std::string& jsonName)
     state.image.resize(arraylen);
     std::fill(state.image.begin(), state.image.end(), glm::vec3());
 }
-
-

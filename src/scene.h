@@ -10,7 +10,8 @@
 
 using namespace std;
 
-class Scene {
+class Scene
+{
 private:
     ifstream fp_in;
     void loadFromJSON(const std::string& jsonName);
