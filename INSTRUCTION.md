@@ -121,6 +121,7 @@ This list is not comprehensive. If you have a particular idea you would like to 
 
 #### Performance Improvements
 
+* :one: Implement Russian roulette path termination, which terminates unimportant paths early without introducing bias. Make sure to include a performance evaluation with and without it enabled, especially for closed scenes. [PBRT 13.7](https://pbr-book.org/3ed-2018/Monte_Carlo_Integration/Russian_Roulette_and_Splitting)
 * :two: Work-efficient stream compaction using shared memory across multiple blocks. (See [*GPU Gems 3*, Chapter 39](https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda).)
   * Note that you will NOT receieve extra credit for this if you implemented shared memory stream compaction as extra credit for Project 2.
 * :six: Hierarchical spatial data structures - for better ray/scene intersection testing
