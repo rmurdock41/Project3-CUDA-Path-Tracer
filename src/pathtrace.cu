@@ -375,11 +375,11 @@ void pathtrace(uchar4* pbo, int frame, int iter)
         // TODO:
         // --- Shading Stage ---
         // Shade path segments based on intersections and generate new rays by
-      // evaluating the BSDF.
-      // Start off with just a big kernel that handles all the different
-      // materials you have in the scenefile.
-      // TODO: compare between directly shading the path segments and shading
-      // path segments that have been reshuffled to be contiguous in memory.
+        // evaluating the BSDF.
+        // Start off with just a big kernel that handles all the different
+        // materials you have in the scenefile.
+        // TODO: compare between directly shading the path segments and shading
+        // path segments that have been reshuffled to be contiguous in memory.
 
         shadeFakeMaterial<<<numblocksPathSegmentTracing, blockSize1d>>>(
             iter,
