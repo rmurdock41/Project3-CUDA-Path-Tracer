@@ -8,6 +8,8 @@ If you plan to use late days on this project (which we recommend), they will app
 
 [Link to "Pathtracing Primer" slides](https://docs.google.com/presentation/d/1pQU_qkxx9Pq9h2Y20tLvE7v7AwaA_6byvszXi9Y-K7A/edit?usp=drive_link)
 
+Note: when cloning this repository, make sure to run `git clone --recursive` in order to also clone the JSON loader library submodule. If you cloned without `--recursive`, you can run `git submodule update --init --recursive` to clone the submodule.
+
 **Summary:**
 
 In this project, you'll implement a CUDA-based path tracer capable of rendering globally-illuminated images very quickly.  Since in this class we are concerned with working in GPU programming, performance, and the generation of actual beautiful images (and not with mundane programming tasks like I/O), this project includes base code for loading a scene description file, described below, and various other things that generally make up a framework for previewing and saving images.
