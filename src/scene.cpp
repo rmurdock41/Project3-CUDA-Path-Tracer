@@ -1,10 +1,10 @@
 #include <iostream>
-#include "scene.h"
 #include <cstring>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtx/string_cast.hpp>
-#include <nlohmann/json.hpp>
 #include <unordered_map>
+#include "json.hpp"
+#include "scene.h"
 using json = nlohmann::json;
 
 Scene::Scene(string filename)
