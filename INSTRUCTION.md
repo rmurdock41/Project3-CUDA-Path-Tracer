@@ -4,7 +4,7 @@ This is due **Tuesday October 1st** at 11:59pm.
 
 This project involves a significant bit of running time to generate high-quality images, so be sure to take that into account. You will receive an additional 2 days (due Thursday, October 3rd) for "README and Scene" only updates. However, the standard project requirements for READMEs still apply for the October 1st deadline. You may use these two extra days to improve your images, charts, performance analysis, etc.
 
-If you plan to use late days on this project (which we recommend), they will apply to the October 5th deadline. Once you have used your extra days and submitted the project, you will recieve the additional 2 days for "README and Scene" updates only.
+If you plan to use late days on this project (which we recommend), they can be applied to the code deadline (which will also push back the README deadline), or they can be applied to just the README deadline. For example, you can use one late day to push the code deadline to October 2nd and the README deadline to October 4th, and then use another late day to push the README deadline further to October 5th, for a total of two late days used.
 
 [Link to "Pathtracing Primer" slides](https://docs.google.com/presentation/d/1pQU_qkxx9Pq9h2Y20tLvE7v7AwaA_6byvszXi9Y-K7A/edit?usp=drive_link)
 
@@ -318,6 +318,8 @@ Please see: [**TIPS FOR WRITING AN AWESOME README**](https://github.com/pjcozzi/
 * Assume the reader has a little knowledge of path tracing - don't go into detail explaining what it is. Focus on your project.
 * Don't talk about it like it's an assignment - don't say what is and isn't "extra" or "extra credit." Talk about what you accomplished.
 * Use this to document what you've done.
+* Your cover image should *NOT* be a Cornell box - show something more interesting!
+  * If you are heavily customizing it, seek pre-approval via Ed Discussion.
 * *DO NOT* leave the README to the last minute!
   * It is a crucial part of the project, and we will not be able to grade you without a good README.
   * Generating images will take time. Be sure to account for it!
