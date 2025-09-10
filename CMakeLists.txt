@@ -48,10 +48,7 @@ set(GLM_ROOT_DIR "${CMAKE_SOURCE_DIR}/external")
 find_package(GLM REQUIRED)
 include_directories(${GLM_INCLUDE_DIRS})
 
-find_package(CCCL REQUIRED)
-
 set(headers
-    src/main.h
     src/image.h
     src/interactions.h
     src/intersections.h
@@ -59,7 +56,6 @@ set(headers
     src/pathtrace.h
     src/scene.h
     src/sceneStructs.h
-    src/preview.h
     src/utilities.h
 )
 
@@ -72,7 +68,6 @@ set(sources
     src/intersections.cu
     src/interactions.cu
     src/scene.cpp
-    src/preview.cpp
     src/utilities.cpp
 )
 
@@ -114,19 +109,10 @@ source_group("ImGui\\Sources" FILES ${imgui_sources})
 add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers} ${imgui_sources} ${imgui_headers})
 target_link_libraries(${CMAKE_PROJECT_NAME}
     ${GL_LIBRARIES}
-    cudadevrt
-    CCCL::Thrust
     #stream_compaction  # TODO: uncomment if using your stream compaction
 )
 set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-
-if(CMAKE_VERSION VERSION_LESS "3.23.0")
-    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES OFF)
-elseif(CMAKE_VERSION VERSION_LESS "3.24.0")
-    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES all-major)
-else()
-    set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES native)
-endif()
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES native)
 
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE "$<$<AND:$<CONFIG:Debug,RelWithDebInfo>,$<COMPILE_LANGUAGE:CUDA>>:-G;-src-in-ptx>")
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-lineinfo;-src-in-ptx>")

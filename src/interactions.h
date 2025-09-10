@@ -1,8 +1,11 @@
 #pragma once
 
-#include "intersections.h"
+#include "sceneStructs.h"
+
 #include <glm/glm.hpp>
+
 #include <thrust/random.h>
+
 // CHECKITOUT
 /**
  * Computes a cosine-weighted random direction in a hemisphere.

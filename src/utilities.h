@@ -1,10 +1,11 @@
 #pragma once
 
 #include "glm/glm.hpp"
+
 #include <algorithm>
 #include <istream>
-#include <ostream>
 #include <iterator>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <vector>

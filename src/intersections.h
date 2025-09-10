@@ -1,10 +1,10 @@
 #pragma once
 
+#include "sceneStructs.h"
+
 #include <glm/glm.hpp>
 #include <glm/gtx/intersect.hpp>
 
-#include "sceneStructs.h"
-#include "utilities.h"
 
 /**
  * Handy-dandy hash function that provides seeds for random number generation.

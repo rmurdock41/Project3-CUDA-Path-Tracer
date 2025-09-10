@@ -1,7 +1,7 @@
 #pragma once
 
-#include <vector>
 #include "scene.h"
+#include "utilities.h"
 
 void InitDataContainer(GuiDataContainer* guiData);
 void pathtraceInit(Scene *scene);

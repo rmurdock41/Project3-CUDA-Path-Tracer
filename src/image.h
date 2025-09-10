@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-using namespace std;
+#include <string>
 
 class Image
 {
