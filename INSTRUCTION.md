@@ -2,9 +2,9 @@
 
 This is due **Tuesday September 30th** at 11:59pm. You can update your README through **Thursday October 2nd** at 11:59pm.
 
-This project involves a significant bit of running time to generate high-quality images, so be sure to take that into account. You will receive an additional 2 days (due Thursday, October 3rd) for "README and Scene" only updates. However, the standard project requirements for READMEs still apply for the October 1st deadline. You may use these two extra days to improve your images, charts, performance analysis, etc.
+This project involves a significant bit of running time to generate high-quality images, so be sure to take that into account. You will receive an additional 2 days (due Thursday, October 2nd) for "README and Scene" only updates. However, the standard project requirements for READMEs still apply for the October 1st deadline. You may use these two extra days to improve your images, charts, performance analysis, etc.
 
-If you plan to use late days on this project (which we recommend), they can be applied to the code deadline (which will also push back the README deadline), or they can be applied to just the README deadline. For example, you can use one late day to push the code deadline to October 2nd and the README deadline to October 4th, and then use another late day to push the README deadline further to October 5th, for a total of two late days used.
+If you plan to use late days on this project (which we recommend), they can be applied to the code deadline (which will also push back the README deadline), or they can be applied to just the README deadline. For example, you can use one late day to push the code deadline to October 1st and the README deadline to October 2nd, and then use another late day to push the README deadline further to October 4th, for a total of two late days used.
 
 [Link to "Pathtracing Primer" Recitation Slides](https://docs.google.com/presentation/d/1rr6zFbpVkdMEkxBK4QLN4_tBRo168SJA_bMi2GkBB6I/edit?usp=drive_link)
 
