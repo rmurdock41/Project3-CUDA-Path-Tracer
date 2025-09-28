@@ -57,6 +57,10 @@ struct Camera
     glm::vec3 right;
     glm::vec2 fov;
     glm::vec2 pixelLength;
+
+    float apertureRadius = 0.0f;   // lens radius; 0 = pinhole (no DoF)
+    float focalDistance = 0.0f;   // focus distance along cam.view; if <=0 we'll fallback
+
 };
 
 struct RenderState

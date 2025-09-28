@@ -51,7 +51,22 @@ __host__ __device__ void scatterRay(
     const Material &m,
     thrust::default_random_engine &rng)
 {
-    // TODO: implement this.
-    // A basic implementation of pure-diffuse shading will just call the
-    // calculateRandomDirectionInHemisphere defined above.
+
+    // Face-forward normal to avoid sampling the wrong hemisphere
+    if (glm::dot(normal, -pathSegment.ray.direction) < 0.f) {
+        normal = -normal;
+    }
+
+    // Cosine-weighted hemisphere sampling 
+    glm::vec3 newDir = calculateRandomDirectionInHemisphere(normal, rng);
+
+    // For cosine-weighted sampling with Lambert BRDF:
+ 
+    pathSegment.color *= glm::clamp(m.color, glm::vec3(0.0f), glm::vec3(1.0f));
+
+    // Offset origin to avoid self-intersection, then set new ray
+    pathSegment.ray.origin = intersect + normal * 1e-4f;
+    pathSegment.ray.direction = newDir;
+
+    pathSegment.remainingBounces--;
 }

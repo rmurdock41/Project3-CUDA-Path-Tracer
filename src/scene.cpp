@@ -59,6 +59,23 @@ void Scene::loadFromJSON(const std::string& jsonName)
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
         }
+        else if (p["TYPE"] == "Refractive")
+        {
+            // Support glass
+            const auto& col = p["RGB"];
+            newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+            newMaterial.hasRefractive = 1.0f;
+            newMaterial.hasReflective = 1.0f; // Fresnel split in shader
+            if (p.contains("IOR")) {
+                newMaterial.indexOfRefraction = (float)p["IOR"];
+            }
+            else if (p.contains("indexOfRefraction")) {
+                newMaterial.indexOfRefraction = (float)p["indexOfRefraction"];
+            }
+            else {
+                newMaterial.indexOfRefraction = 1.5f; // default glass IOR
+            }
+        }
         MatNameToID[name] = materials.size();
         materials.emplace_back(newMaterial);
     }
@@ -105,17 +122,27 @@ void Scene::loadFromJSON(const std::string& jsonName)
     camera.lookAt = glm::vec3(lookat[0], lookat[1], lookat[2]);
     camera.up = glm::vec3(up[0], up[1], up[2]);
 
+    // ===== DoF params (optional; default to 0 == disabled) =====
+    if (cameraData.contains("APERTURE_RADIUS"))
+        camera.apertureRadius = cameraData["APERTURE_RADIUS"];
+    else
+        camera.apertureRadius = 0.0f;
+
+    if (cameraData.contains("FOCAL_DISTANCE"))
+        camera.focalDistance = cameraData["FOCAL_DISTANCE"];
+    else
+        camera.focalDistance = 0.0f;
+
     //calculate fov based on resolution
     float yscaled = tan(fovy * (PI / 180));
     float xscaled = (yscaled * camera.resolution.x) / camera.resolution.y;
     float fovx = (atan(xscaled) * 180) / PI;
     camera.fov = glm::vec2(fovx, fovy);
 
+    camera.view = glm::normalize(camera.lookAt - camera.position);
     camera.right = glm::normalize(glm::cross(camera.view, camera.up));
     camera.pixelLength = glm::vec2(2 * xscaled / (float)camera.resolution.x,
         2 * yscaled / (float)camera.resolution.y);
-
-    camera.view = glm::normalize(camera.lookAt - camera.position);
 
     //set up render camera stuff
     int arraylen = camera.resolution.x * camera.resolution.y;
