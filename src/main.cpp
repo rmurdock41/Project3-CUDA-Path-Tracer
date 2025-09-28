@@ -264,35 +264,80 @@ void RenderImGui()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    bool show_demo_window = true;
-    bool show_another_window = false;
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-    static float f = 0.0f;
-    static int counter = 0;
+    ImGui::Begin("Path Tracer Analytics");
 
-    ImGui::Begin("Path Tracer Analytics");                  // Create a window called "Hello, world!" and append into it.
-    
-    // LOOK: Un-Comment to check the output window and usage
-    //ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-    //ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-    //ImGui::Checkbox("Another Window", &show_another_window);
-
-    //ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-    //ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-    //if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-    //    counter++;
-    //ImGui::SameLine();
-    //ImGui::Text("counter = %d", counter);
     ImGui::Text("Traced Depth %d", imguiData->TracedDepth);
-    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-    ImGui::End();
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
+        1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 
+    ImGui::Separator();
+    ImGui::TextUnformatted("Depth of Field (thin lens)");
+
+    // Access the active camera
+    Camera& cam = renderState->camera;
+
+    // Persisted UI state
+    static bool  dofEnabled = false;
+    static float uiAperture = 0.0f;
+    static float uiFocalDist = 0.0f;
+
+    // Initialize UI state from camera once when the window appears
+    if (ImGui::IsWindowAppearing())
+    {
+        dofEnabled = (cam.apertureRadius > 0.0f && cam.focalDistance > 0.0f);
+        uiAperture = cam.apertureRadius;
+        uiFocalDist = (cam.focalDistance > 0.0f)
+            ? cam.focalDistance
+            : glm::length(cam.lookAt - cam.position);
+    }
+
+    // Toggle DoF
+    bool toggled = ImGui::Checkbox("Enable DoF", &dofEnabled);
+    if (toggled)
+    {
+        if (!dofEnabled)
+        {
+            // Disable by setting aperture to zero (keeps focal distance around)
+            cam.apertureRadius = 0.0f;
+        }
+        else
+        {
+            // Enable with current UI values (set safe defaults if needed)
+            if (uiAperture <= 0.0f) uiAperture = 0.05f;
+            if (uiFocalDist <= 0.0f) uiFocalDist = glm::length(cam.lookAt - cam.position);
+            cam.apertureRadius = uiAperture;
+            cam.focalDistance = uiFocalDist;
+        }
+        camchanged = true;
+        iteration = 0; // restart accumulation
+    }
+
+    // DoF parameters (active only when enabled)
+    ImGui::BeginDisabled(!dofEnabled);
+    bool changedA = ImGui::SliderFloat("Aperture radius", &uiAperture, 0.0f, 0.2f, "%.4f");
+    bool changedF = ImGui::SliderFloat("Focal distance", &uiFocalDist, 0.1f, 100.0f, "%.3f");
+    ImGui::EndDisabled();
+
+    if (dofEnabled && (changedA || changedF))
+    {
+        cam.apertureRadius = uiAperture;
+        cam.focalDistance = uiFocalDist;
+        camchanged = true;
+        iteration = 0; // restart accumulation
+    }
+
+    ImGui::Text("DoF: %s | aperture=%.4f | focalDist=%.3f",
+        dofEnabled ? "ON" : "OFF",
+        cam.apertureRadius,
+        (cam.focalDistance > 0.0f ? cam.focalDistance : 0.0f));
+
+    ImGui::End();
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
 }
+
+
 
 bool MouseOverImGuiWindow()
 {
