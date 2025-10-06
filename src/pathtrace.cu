@@ -1194,6 +1194,59 @@ __global__ void shadeMaterial(
         return;
     }
 
+
+
+// Perfect specular 
+    if (material.hasReflective > 0.0f && material.hasRefractive <= 0.0f) {
+        if (rrEnabled && bouncesDone >= rrMinDepth) {
+            float pSurvive = fmaxf(fmaxf(pathSegment.color.x, pathSegment.color.y), pathSegment.color.z);
+            pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
+            if (u01(rng) > pSurvive) {
+                pathSegment.color = glm::vec3(0.0f);
+                pathSegment.remainingBounces = 0;
+                return;
+            }
+            else {
+                pathSegment.color *= (1.0f / pSurvive);
+            }
+        }
+
+        const glm::vec3 wo = pathSegment.ray.direction;
+        const glm::vec3 N = n; 
+
+        glm::vec3 idealR = glm::reflect(wo, N);
+
+        float rough = fmaxf(0.0f, fminf(material.roughness, 1.0f));
+        auto sampleAroundDir = [&](const glm::vec3& dir) -> glm::vec3 {
+            if (rough <= 1e-6f) return glm::normalize(dir);
+            float alpha = fmaxf(1e-4f, rough);
+            float k = fmaxf(0.0f, 1.0f / (alpha * alpha) - 1.0f);
+            float u1 = u01(rng), u2 = u01(rng);
+            float cosTheta = powf(u1, 1.0f / (k + 1.0f));
+            float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+            float phi = 2.0f * PI * u2;
+
+            glm::vec3 d = glm::normalize(dir);
+            glm::vec3 t = (fabsf(d.z) < 0.999f)
+                ? glm::normalize(glm::cross(glm::vec3(0, 0, 1), d))
+                : glm::normalize(glm::cross(glm::vec3(0, 1, 0), d));
+            glm::vec3 b = glm::cross(d, t);
+            glm::vec3 local(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
+            return glm::normalize(local.x * t + local.y * b + local.z * d);
+            };
+
+        glm::vec3 rdir = sampleAroundDir(idealR);
+
+        glm::vec3 F = glm::clamp(material.color, glm::vec3(0.0f), glm::vec3(1.0f));
+        pathSegment.color *= F;
+
+        const float EPS = 2e-3f;
+        pathSegment.ray.origin = p + N * EPS;
+        pathSegment.ray.direction = rdir;
+        pathSegment.remainingBounces--;
+        return;
+    }
+
     // Diffuse 
     {
         glm::vec3 albedo = glm::clamp(material.color, glm::vec3(0.f), glm::vec3(1.f));

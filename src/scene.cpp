@@ -64,9 +64,18 @@ void Scene::loadFromJSON(const std::string& jsonName)
         {
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+            newMaterial.hasReflective = p.contains("REFLECTIVE")
+                ? (float)p["REFLECTIVE"]   
+                : 1.0f;                   
+            newMaterial.hasRefractive = 0.0f;
+
             if (p.contains("ROUGHNESS")) {
-                newMaterial.roughness = (float)p["ROUGHNESS"]; 
+                newMaterial.roughness = (float)p["ROUGHNESS"];
             }
+            else {
+                newMaterial.roughness = 0.0f;
+            }
+            newMaterial.emittance = 0.0f;
         }
         else if (p["TYPE"] == "Refractive")
         {
