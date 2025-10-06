@@ -24,7 +24,8 @@
     "specular_white": {
       "TYPE": "Specular",
       "RGB": [ 0.98, 0.98, 0.98 ],
-      "ROUGHNESS": 0.0
+      "ROUGHNESS": 0.0,
+      "REFLECTIVE": 1.0
     },
     "glass": {
       "TYPE": "Refractive",
@@ -90,7 +91,7 @@
 
     {
       "TYPE": "SPHERE",
-      "MATERIAL": "glass",
+      "MATERIAL": "specular_white",
       "TRANS": [ -1.0, 1.6, -1.0 ],
       "ROTAT": [ 0.0, 0.0, 0.0 ],
       "SCALE": [ 3.0, 3.0, 3.0 ]
