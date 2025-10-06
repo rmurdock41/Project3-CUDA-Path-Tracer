@@ -23,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include "mesh_loader.h"  
 
 static std::string startTimeString;
 
@@ -269,6 +270,82 @@ void RenderImGui()
     ImGui::Text("Traced Depth %d", imguiData->TracedDepth);
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
         1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+
+
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Pipeline toggles");
+
+
+    static bool uiMatSort = false;
+    static bool uiCompaction = false;
+    if (ImGui::IsWindowAppearing()) {
+        uiMatSort = GetMaterialSortEnabled();
+        uiCompaction = GetStreamCompactionEnabled();
+    }
+
+
+    if (ImGui::Checkbox("Material sort", &uiMatSort)) {
+        SetMaterialSortEnabled(uiMatSort);
+
+    }
+
+
+    if (ImGui::Checkbox("Stream compaction", &uiCompaction)) {
+        SetStreamCompactionEnabled(uiCompaction);
+    }
+
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Acceleration (BVH)");
+
+
+    static bool bvhEnabled = false;
+    if (ImGui::IsWindowAppearing()) {
+        bvhEnabled = GetBVHEnabled();
+    }
+
+    bool toggledBVH = ImGui::Checkbox("Enable BVH acceleration", &bvhEnabled);
+    if (toggledBVH) {
+        SetBVHEnabled(bvhEnabled);
+
+        iteration = 0;
+
+    }
+
+    ImGui::Text("BVH: %s", bvhEnabled ? "ON" : "OFF");
+
+
+
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Russian Roulette");
+
+    static bool uiRR = false;
+    static int  uiRRMin = 3;
+
+    if (ImGui::IsWindowAppearing()) {
+        uiRR = GetRREnabled();
+        uiRRMin = GetRRMinDepth();
+    }
+
+
+    if (ImGui::Checkbox("Enable Russian Roulette", &uiRR)) {
+        SetRREnabled(uiRR);
+        iteration = 0; 
+    }
+
+    ImGui::BeginDisabled(!uiRR);
+    int maxRR = glm::max(1, renderState->traceDepth - 1);   
+    bool changedRRMin = ImGui::SliderInt("RR min depth", &uiRRMin, 1, maxRR);
+    ImGui::EndDisabled();
+
+    if (changedRRMin) {
+        uiRRMin = glm::clamp(uiRRMin, 1, maxRR);
+        SetRRMinDepth(uiRRMin);
+        iteration = 0; 
+    }
+
 
     ImGui::Separator();
     ImGui::TextUnformatted("Depth of Field (thin lens)");

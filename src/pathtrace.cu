@@ -16,6 +16,10 @@
 #include "interactions.h"
 #include "../stream_compaction/efficient.h"  
 
+#include <vector>
+#include <algorithm>
+#include "mesh_loader.h"
+
 #include <thrust/sort.h>
 #include <thrust/sequence.h>
 #include <thrust/gather.h>
@@ -26,11 +30,45 @@ using StreamCompaction::Efficient::scanDevice;
 #define ENABLE_MATERIAL_SORT 1
 #define ENABLE_STREAM_COMPACTION 1
 
+// ==== BVH feature toggle ====
+#define ENABLE_BVH 1
+
+static bool gEnableBVH = true; 
+void SetBVHEnabled(bool v) { gEnableBVH = v; }
+bool GetBVHEnabled() { return gEnableBVH; }
+
+// ===== Russian Roulette (RR) =====
+#define ENABLE_RR 1
+
+static bool gEnableRR = false;  
+static int  gRRMinDepth = 1;     
+
+void SetRREnabled(bool v) { gEnableRR = v; }
+bool GetRREnabled() { return gEnableRR; }
+void SetRRMinDepth(int d) { gRRMinDepth = d; }
+int  GetRRMinDepth() { return gRRMinDepth; }
+
+
+
+// ===== GPU Tris =====
+struct Tri {
+    glm::vec3 v0, v1, v2;
+    int       materialId;
+};
+
+static Tri* dev_tris = nullptr;
+static int  g_numTris = 0;
+static bool gEnableMeshCull = true;
+void SetMeshCullEnabled(bool v) { gEnableMeshCull = v; }
+bool GetMeshCullEnabled() { return gEnableMeshCull; }
+static std::vector<TriCPU> h_allTris;
+
 static bool gEnableMaterialSortRuntime = true;  
 static bool gEnableStreamCompaction = true;   
 void SetStreamCompactionEnabled(bool v) { gEnableStreamCompaction = v; }
 bool GetStreamCompactionEnabled() { return gEnableStreamCompaction; }
-
+void SetMaterialSortEnabled(bool v) { gEnableMaterialSortRuntime = v; }
+bool GetMaterialSortEnabled() { return gEnableMaterialSortRuntime; }
 
 static int* dev_matKeys = nullptr;
 static int* dev_indices = nullptr;
@@ -178,6 +216,598 @@ static ShadeableIntersection* dev_intersections = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
+#if ENABLE_BVH
+struct BVHNode;
+static struct BVHNode* dev_bvhNodes = nullptr;
+static int* dev_primIndices = nullptr;
+#endif
+
+
+// ===== AABB / BVH structs & helpers ======
+struct AABB {
+    glm::vec3 minB;
+    glm::vec3 maxB;
+};
+
+struct BVHNode {
+    AABB box;
+    int left;       
+    int right;      
+    int firstPrim;  
+    int primCount;  
+};
+
+struct TriBVHNode {
+    AABB box;
+    int  left;
+    int  right;
+    int  firstTri;  
+    int  triCount;  
+};
+
+
+
+static TriBVHNode* dev_triBVHNodes = nullptr;
+static int* dev_triPrimIdx = nullptr;
+
+static std::vector<TriBVHNode> h_triBVHNodes;
+static std::vector<int>        h_triPrimIdx;
+
+static bool gEnableTriBVH = true;
+void SetTriBVHEnabled(bool v) { gEnableTriBVH = v; }
+bool GetTriBVHEnabled() { return gEnableTriBVH; }
+
+
+
+__host__ __device__ inline AABB makeEmptyAABB() {
+    AABB b;
+    b.minB = glm::vec3(FLT_MAX);
+    b.maxB = glm::vec3(-FLT_MAX);
+    return b;
+}
+
+__host__ __device__ inline void expandAABB(AABB& b, const AABB& c) {
+    b.minB = glm::min(b.minB, c.minB);
+    b.maxB = glm::max(b.maxB, c.maxB);
+}
+
+// slab 
+__host__ __device__ inline bool intersectAABB(const AABB& box, const Ray& r, float tMax) {
+    const float kEps = 1e-8f;
+    glm::vec3 invD = glm::vec3(
+        1.0f / ((fabsf(r.direction.x) > kEps) ? r.direction.x : (r.direction.x >= 0 ? kEps : -kEps)),
+        1.0f / ((fabsf(r.direction.y) > kEps) ? r.direction.y : (r.direction.y >= 0 ? kEps : -kEps)),
+        1.0f / ((fabsf(r.direction.z) > kEps) ? r.direction.z : (r.direction.z >= 0 ? kEps : -kEps)));
+
+    glm::vec3 t0 = (box.minB - r.origin) * invD;
+    glm::vec3 t1 = (box.maxB - r.origin) * invD;
+    glm::vec3 tmin3 = glm::min(t0, t1);
+    glm::vec3 tmax3 = glm::max(t0, t1);
+
+    float tmin = fmaxf(fmaxf(tmin3.x, tmin3.y), tmin3.z);
+    float tmax = fminf(fminf(tmax3.x, tmax3.y), fminf(tMax, tmax3.z));
+    return tmax >= fmaxf(tmin, 0.0f);
+}
+
+
+
+
+__device__ __forceinline__ float intersectTriangleMT(const Ray& r, const Tri& tr) {
+    const float EPS = 1e-7f;
+    glm::vec3 e1 = tr.v1 - tr.v0;
+    glm::vec3 e2 = tr.v2 - tr.v0;
+    glm::vec3 p = glm::cross(r.direction, e2);
+    float det = glm::dot(e1, p);
+    if (fabsf(det) < EPS) return -1.f;
+    float invDet = 1.f / det;
+    glm::vec3 tvec = r.origin - tr.v0;
+    float u = glm::dot(tvec, p) * invDet; if (u < 0.f || u > 1.f) return -1.f;
+    glm::vec3 q = glm::cross(tvec, e1);
+    float v = glm::dot(r.direction, q) * invDet; if (v < 0.f || u + v > 1.f) return -1.f;
+    float t = glm::dot(e2, q) * invDet; if (t <= 0.f) return -1.f;
+    return t;
+}
+
+
+// ===== CPU-side BVH build  =====
+struct BuildPrim {
+    AABB      box;
+    glm::vec3 centroid;
+    int       primId;   
+};
+
+static std::vector<BVHNode> h_bvhNodes;
+static std::vector<int>     h_primIndices;
+
+static int buildBVHRecursive(std::vector<BVHNode>& outNodes,
+    std::vector<int>& outPrimIdx,
+    std::vector<BuildPrim>& bp,
+    int begin, int end)
+{
+    int nodeIdx = (int)outNodes.size();
+    outNodes.push_back(BVHNode{}); 
+
+    AABB bbox = makeEmptyAABB();
+    AABB cbox = makeEmptyAABB();
+    for (int i = begin; i < end; ++i) {
+        expandAABB(bbox, bp[i].box);
+        AABB cc; cc.minB = cc.maxB = bp[i].centroid;
+        expandAABB(cbox, cc);
+    }
+
+    int count = end - begin;
+    if (count <= 4) {
+        BVHNode leaf;
+        leaf.box = bbox;
+        leaf.left = -1;
+        leaf.right = -1;
+        leaf.firstPrim = (int)outPrimIdx.size();
+        leaf.primCount = count;
+        for (int i = begin; i < end; ++i) outPrimIdx.push_back(bp[i].primId);
+        outNodes[nodeIdx] = leaf;
+        return nodeIdx;
+    }
+
+    glm::vec3 diag = cbox.maxB - cbox.minB;
+    int axis = (diag.x > diag.y && diag.x > diag.z) ? 0 : (diag.y > diag.z ? 1 : 2);
+
+    int mid = (begin + end) / 2;
+    std::nth_element(bp.begin() + begin, bp.begin() + mid, bp.begin() + end,
+        [axis](const BuildPrim& a, const BuildPrim& b) {
+            return a.centroid[axis] < b.centroid[axis];
+        });
+
+    int L = buildBVHRecursive(outNodes, outPrimIdx, bp, begin, mid);
+    int R = buildBVHRecursive(outNodes, outPrimIdx, bp, mid, end);
+
+    BVHNode inner;
+    inner.box = bbox;
+    inner.left = L;
+    inner.right = R;
+    inner.firstPrim = -1;
+    inner.primCount = 0;
+    outNodes[nodeIdx] = inner;
+    return nodeIdx;
+}
+
+
+static inline void getGeomAABBAndCentroid(const Geom& g, AABB& outBox, glm::vec3& outCentroid)
+{
+    const glm::mat4 M = g.transform;
+
+    if (g.type == CUBE) {
+        const float h = 0.5f; 
+        glm::vec3 corners[8] = {
+            {-h,-h,-h},{ h,-h,-h},{-h, h,-h},{ h, h,-h},
+            {-h,-h, h},{ h,-h, h},{-h, h, h},{ h, h, h}
+        };
+        AABB b = makeEmptyAABB();
+        glm::vec3 sum(0.f);
+        for (int i = 0; i < 8; ++i) {
+            glm::vec3 pw = glm::vec3(M * glm::vec4(corners[i], 1.f));
+            b.minB = glm::min(b.minB, pw);
+            b.maxB = glm::max(b.maxB, pw);
+            sum += pw;
+        }
+        outBox = b;
+        outCentroid = sum / 8.f;
+    }
+    else if (g.type == SPHERE) {
+        const float r = 0.5f;
+        glm::vec3 c = glm::vec3(M * glm::vec4(0, 0, 0, 1));
+        float ex = r * (fabs(M[0][0]) + fabs(M[1][0]) + fabs(M[2][0]));
+        float ey = r * (fabs(M[0][1]) + fabs(M[1][1]) + fabs(M[2][1]));
+        float ez = r * (fabs(M[0][2]) + fabs(M[1][2]) + fabs(M[2][2]));
+        glm::vec3 ext(ex, ey, ez);
+        outBox.minB = c - ext;
+        outBox.maxB = c + ext;
+        outCentroid = c;
+    }
+    else if (g.type == MESH) {
+        outBox.minB = g.bboxMin;
+        outBox.maxB = g.bboxMax;
+        outCentroid = 0.5f * (g.bboxMin + g.bboxMax);
+    }
+    else {
+        glm::vec3 T = glm::vec3(M[3]);
+        outBox.minB = T - glm::vec3(1e-3f);
+        outBox.maxB = T + glm::vec3(1e-3f);
+        outCentroid = T;
+    }
+}
+
+
+struct TriBuildPrim {
+    AABB      box;
+    glm::vec3 centroid;
+    int       triId;  
+};
+
+static int buildTriBVHRecursive(
+    std::vector<TriBVHNode>& outNodes,
+    std::vector<int>& outPrimIdx,
+    std::vector<TriBuildPrim>& bp,
+    int begin, int end)
+{
+    int nodeIdx = (int)outNodes.size();
+    outNodes.push_back(TriBVHNode{});   
+
+    AABB bbox = makeEmptyAABB();
+    AABB cbox = makeEmptyAABB();
+    for (int i = begin; i < end; ++i) {
+        expandAABB(bbox, bp[i].box);
+        AABB cc; cc.minB = cc.maxB = bp[i].centroid;
+        expandAABB(cbox, cc);
+    }
+
+    int count = end - begin;
+    if (count <= 4) { 
+        TriBVHNode leaf;
+        leaf.box = bbox;
+        leaf.left = -1; leaf.right = -1;
+        leaf.firstTri = (int)outPrimIdx.size();
+        leaf.triCount = count;
+        for (int i = begin; i < end; ++i) outPrimIdx.push_back(bp[i].triId);
+        outNodes[nodeIdx] = leaf;
+        return nodeIdx;
+    }
+
+    glm::vec3 diag = cbox.maxB - cbox.minB;
+    int axis = (diag.x > diag.y && diag.x > diag.z) ? 0 : (diag.y > diag.z ? 1 : 2);
+    int mid = (begin + end) / 2;
+    std::nth_element(bp.begin() + begin, bp.begin() + mid, bp.begin() + end,
+        [axis](const TriBuildPrim& a, const TriBuildPrim& b) {
+            return a.centroid[axis] < b.centroid[axis];
+        });
+
+    int L = buildTriBVHRecursive(outNodes, outPrimIdx, bp, begin, mid);
+    int R = buildTriBVHRecursive(outNodes, outPrimIdx, bp, mid, end);
+
+    TriBVHNode inner;
+    inner.box = bbox;
+    inner.left = L; inner.right = R;
+    inner.firstTri = -1; inner.triCount = 0;
+    outNodes[nodeIdx] = inner;
+    return nodeIdx;
+}
+
+
+static void buildAndUploadTriBVH(Scene* scene)
+{
+    h_triBVHNodes.clear();
+    h_triPrimIdx.clear();
+
+    for (auto& g : scene->geoms) {
+        if (g.type != MESH || g.triCount == 0) { g.triBVHRoot = -1; continue; }
+
+        std::vector<TriBuildPrim> bp;
+        bp.reserve(g.triCount);
+
+        for (int i = 0; i < g.triCount; ++i) {
+            const TriCPU& t = h_allTris[g.triOffset + i];
+            AABB b = makeEmptyAABB();
+            b.minB = glm::min(t.v0, glm::min(t.v1, t.v2));
+            b.maxB = glm::max(t.v0, glm::max(t.v1, t.v2));
+            glm::vec3 c = (b.minB + b.maxB) * 0.5f;
+
+            bp.push_back(TriBuildPrim{ b, c, g.triOffset + i });
+        }
+
+        int root = buildTriBVHRecursive(h_triBVHNodes, h_triPrimIdx, bp, 0, (int)bp.size());
+        g.triBVHRoot = root;
+    }
+
+
+    cudaFree(dev_triBVHNodes); dev_triBVHNodes = nullptr;
+    cudaFree(dev_triPrimIdx);  dev_triPrimIdx = nullptr;
+
+    if (!h_triBVHNodes.empty()) {
+        cudaMalloc(&dev_triBVHNodes, h_triBVHNodes.size() * sizeof(TriBVHNode));
+        cudaMemcpy(dev_triBVHNodes, h_triBVHNodes.data(),
+            h_triBVHNodes.size() * sizeof(TriBVHNode), cudaMemcpyHostToDevice);
+    }
+    if (!h_triPrimIdx.empty()) {
+        cudaMalloc(&dev_triPrimIdx, h_triPrimIdx.size() * sizeof(int));
+        cudaMemcpy(dev_triPrimIdx, h_triPrimIdx.data(),
+            h_triPrimIdx.size() * sizeof(int), cudaMemcpyHostToDevice);
+    }
+
+    printf("[TriBVH] nodes=%zu, prims=%zu\n", h_triBVHNodes.size(), h_triPrimIdx.size());
+}
+
+#if ENABLE_BVH
+
+static void buildAndUploadBVH(Scene* scene) {
+
+    std::vector<BuildPrim> bp;
+    bp.reserve(scene->geoms.size());
+    for (int i = 0; i < (int)scene->geoms.size(); ++i) {
+        AABB b; glm::vec3 c;
+        getGeomAABBAndCentroid(scene->geoms[i], b, c);
+        bp.push_back(BuildPrim{ b, c, i });
+    }
+
+    if (bp.empty()) {
+        h_bvhNodes.clear(); h_primIndices.clear();
+        cudaFree(dev_bvhNodes);    dev_bvhNodes = nullptr;
+        cudaFree(dev_primIndices); dev_primIndices = nullptr;
+        return;
+    }
+
+    h_bvhNodes.clear();
+    h_primIndices.clear();
+    h_bvhNodes.reserve(bp.size() * 2);
+    buildBVHRecursive(h_bvhNodes, h_primIndices, bp, 0, (int)bp.size());
+
+
+    cudaFree(dev_bvhNodes);    dev_bvhNodes = nullptr;
+    cudaFree(dev_primIndices); dev_primIndices = nullptr;
+
+    cudaMalloc(&dev_bvhNodes, h_bvhNodes.size() * sizeof(BVHNode));
+    cudaMemcpy(dev_bvhNodes, h_bvhNodes.data(),
+        h_bvhNodes.size() * sizeof(BVHNode), cudaMemcpyHostToDevice);
+
+    cudaMalloc(&dev_primIndices, h_primIndices.size() * sizeof(int));
+    cudaMemcpy(dev_primIndices, h_primIndices.data(),
+        h_primIndices.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+
+    printf("[BVH] nodes=%zu, prims=%zu\n", h_bvhNodes.size(), h_primIndices.size());
+
+}
+
+
+
+static void freeBVH() {
+    cudaFree(dev_bvhNodes);     dev_bvhNodes = nullptr;
+    cudaFree(dev_primIndices);  dev_primIndices = nullptr;
+}
+#endif
+
+// ===== Device-side primitive intersection =====
+__device__ inline bool intersectPrimitiveGeom(
+    const Geom* geoms, int primId, const Ray& ray,
+    const Tri* __restrict__ tris,
+    const TriBVHNode* __restrict__ triNodes,
+    const int* __restrict__ triPrimIdx,
+    float& tHit, glm::vec3& nHit, int& matId)
+{
+    const Geom& g = geoms[primId];
+    float t = -1.0f; glm::vec3 pTmp, nTmp; bool outside = true;
+
+    if (g.type == CUBE) {
+        t = boxIntersectionTest(g, ray, pTmp, nTmp, outside);
+        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; return true; }
+        return false;
+    }
+    else if (g.type == SPHERE) {
+        t = sphereIntersectionTest(g, ray, pTmp, nTmp, outside);
+        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; return true; }
+        return false;
+    }
+    else if (g.type == MESH) {
+        AABB mbox; mbox.minB = g.bboxMin; mbox.maxB = g.bboxMax;
+        if (!intersectAABB(mbox, ray, tHit)) return false;
+
+        if (triNodes == nullptr || triPrimIdx == nullptr || g.triBVHRoot < 0) {
+            bool any = false;
+            for (int k = 0; k < g.triCount; ++k) {
+                const Tri& tr = tris[g.triOffset + k];
+                float th = intersectTriangleMT(ray, tr);
+                if (th > 0.0f && th < tHit) {
+                    tHit = th;
+                    nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
+                    matId = tr.materialId;
+                    any = true;
+                }
+            }
+            return any;
+        }
+
+        int stack[64]; int sp = 0;
+        stack[sp++] = g.triBVHRoot;
+
+        bool hit = false;
+        while (sp) {
+            const int ni = stack[--sp];
+            const TriBVHNode& node = triNodes[ni];
+
+            if (!intersectAABB(node.box, ray, tHit)) continue;
+
+            if (node.triCount > 0) {
+                for (int i = 0; i < node.triCount; ++i) {
+                    const int triIdx = triPrimIdx[node.firstTri + i];
+                    const Tri& tr = tris[triIdx];
+
+                    float th = intersectTriangleMT(ray, tr);
+                    if (th > 0.0f && th < tHit) {
+                        tHit = th;
+                        nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
+                        matId = tr.materialId;
+                        hit = true;
+                    }
+                }
+            }
+            else {
+
+                if (node.left >= 0) stack[sp++] = node.left;
+                if (node.right >= 0) stack[sp++] = node.right;
+            }
+        }
+        return hit;
+    }
+
+    return false;
+}
+
+
+
+// ===== BVH traversal =====
+__device__ inline void traverseBVH(
+    const Ray& ray,
+    const BVHNode* __restrict__ nodes,
+    const int* __restrict__ primIdx,
+    const Geom* __restrict__ geoms,
+    const Tri* __restrict__ tris,
+    const TriBVHNode* __restrict__ triNodes,
+    const int* __restrict__ triPrimIdx,
+    float& outT, int& outGeom, glm::vec3& outN, int& outMat)
+{
+    int stack[64]; int sp = 0;
+    float tClosest = FLT_MAX; int hitGeom = -1; glm::vec3 nHit(0.f); int mId = -1;
+
+    stack[sp++] = 0;
+    while (sp) {
+        const int ni = stack[--sp];
+        const BVHNode& node = nodes[ni];
+        if (!intersectAABB(node.box, ray, tClosest)) continue;
+
+        if (node.primCount > 0) {
+            for (int i = 0; i < node.primCount; ++i) {
+                const int pid = primIdx[node.firstPrim + i];
+                float t = tClosest; glm::vec3 n; int mat;
+                if (intersectPrimitiveGeom(geoms, pid, ray, tris, triNodes, triPrimIdx, t, n, mat)) {
+                    if (t < tClosest) { tClosest = t; hitGeom = pid; nHit = n; mId = mat; }
+                }
+            }
+        }
+        else {
+            if (node.left >= 0) stack[sp++] = node.left;
+            if (node.right >= 0) stack[sp++] = node.right;
+        }
+    }
+    outT = tClosest; outGeom = hitGeom; outN = nHit; outMat = mId;
+}
+
+__device__ inline bool traverseTriBVH(
+    const Ray& ray,
+    const TriBVHNode* __restrict__ nodes,
+    const int* __restrict__ primIdx,
+    int root,
+    const Tri* __restrict__ tris,
+    float& tHit, glm::vec3& nHit, int& matId)
+{
+    int stack[64]; int sp = 0;
+    stack[sp++] = root;
+    bool any = false;
+
+    while (sp) {
+        const int ni = stack[--sp];
+        const TriBVHNode& n = nodes[ni];
+
+        if (!intersectAABB(n.box, ray, tHit)) continue;
+
+        if (n.triCount > 0) {
+            // leaf
+            for (int i = 0; i < n.triCount; ++i) {
+                const int tid = primIdx[n.firstTri + i];  
+                const Tri& tr = tris[tid];
+                float th = intersectTriangleMT(ray, tr);
+                if (th > 0.f && th < tHit) {
+                    tHit = th;
+                    nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
+                    matId = tr.materialId;
+                    any = true;
+                }
+            }
+        }
+        else {
+            if (n.left >= 0) stack[sp++] = n.left;
+            if (n.right >= 0) stack[sp++] = n.right;
+        }
+    }
+    return any;
+}
+
+
+
+
+// ===== CPU - side triangle upload =====
+
+
+
+static void UploadTrisToGPU() {
+    if (h_allTris.empty()) { g_numTris = 0; cudaFree(dev_tris); dev_tris = nullptr; return; }
+    g_numTris = (int)h_allTris.size();
+    cudaFree(dev_tris);
+    cudaMalloc(&dev_tris, g_numTris * sizeof(Tri));
+
+    std::vector<Tri> temp(g_numTris);
+    for (int i = 0; i < g_numTris; ++i) {
+        temp[i].v0 = h_allTris[i].v0;
+        temp[i].v1 = h_allTris[i].v1;
+        temp[i].v2 = h_allTris[i].v2;
+        temp[i].materialId = h_allTris[i].materialId;
+    }
+    cudaMemcpy(dev_tris, temp.data(), g_numTris * sizeof(Tri), cudaMemcpyHostToDevice);
+}
+
+
+static void BakeMeshesIntoSceneAndCPUTris(Scene* scene) {
+    h_allTris.clear();
+
+    for (const auto& mi : scene->meshInstances) {
+        std::vector<TriCPU> local;
+        std::string err;
+        if (!LoadGLTF_AsTris(mi.path, mi.M_world, mi.materialId, local, &err)) {
+            printf("[GLTF] load failed: %s\n", err.c_str());
+            continue;
+        }
+
+
+        glm::vec3 bbMin(FLT_MAX), bbMax(-FLT_MAX);
+        for (const auto& t : local) {
+            bbMin = glm::min(bbMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
+            bbMax = glm::max(bbMax, glm::max(t.v0, glm::max(t.v1, t.v2)));
+        }
+
+        Geom g{};
+        g.type = MESH;
+        g.materialid = mi.materialId;       
+        g.triOffset = (int)h_allTris.size();
+        g.triCount = (int)local.size();
+        g.bboxMin = bbMin;
+        g.bboxMax = bbMax;
+        g.transform = mi.M_world;
+        g.inverseTransform = glm::inverse(mi.M_world);
+        g.invTranspose = glm::transpose(g.inverseTransform);
+        g.triBVHRoot = -1;
+
+        scene->geoms.push_back(g);
+
+
+        h_allTris.insert(h_allTris.end(), local.begin(), local.end());
+    }
+}
+
+
+// ===== Russian Roulette helper functions =====
+__device__ __forceinline__ float luminance(const glm::vec3& c) {
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
+__device__ __forceinline__ bool russianRoulette(
+    PathSegment& path,
+    thrust::default_random_engine& rng,
+    int bouncesDone, int rrMinDepth)
+{
+    if (bouncesDone < rrMinDepth) return false;
+
+    float p = fminf(fmaxf(luminance(path.color), 0.05f), 0.95f);
+    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
+
+    if (u01(rng) > p) {
+        path.color = glm::vec3(0.0f);
+        path.remainingBounces = 0;
+        return true;
+    }
+    else {
+        path.color /= p;
+        return false;
+    }
+}
+
+
 void InitDataContainer(GuiDataContainer* imGuiData)
 {
     guiData = imGuiData;
@@ -186,6 +816,18 @@ void InitDataContainer(GuiDataContainer* imGuiData)
 void pathtraceInit(Scene* scene)
 {
     hst_scene = scene;
+
+
+    BakeMeshesIntoSceneAndCPUTris(scene);
+    UploadTrisToGPU();
+
+
+    buildAndUploadTriBVH(scene);          
+#if ENABLE_BVH
+    buildAndUploadBVH(scene);              
+#endif
+
+
 
     const Camera& cam = hst_scene->state.camera;
     const int pixelcount = cam.resolution.x * cam.resolution.y;
@@ -235,6 +877,9 @@ void pathtraceFree()
     cudaFree(dev_materials);
     cudaFree(dev_intersections);
 
+    cudaFree(dev_tris); dev_tris = nullptr; g_numTris = 0;
+
+
 	//material sort
 #if ENABLE_MATERIAL_SORT
     cudaFree(dev_matKeys);
@@ -251,10 +896,21 @@ void pathtraceFree()
     cudaFree(dev_intersections_compacted);
 #endif
 
+
+#if ENABLE_BVH
+    freeBVH();
+#endif
+
+    cudaFree(dev_triBVHNodes); dev_triBVHNodes = nullptr;
+    cudaFree(dev_triPrimIdx);  dev_triPrimIdx = nullptr;
+
+
     // TODO: clean up any extra device memory you created
 
     checkCUDAError("pathtraceFree");
 }
+
+
 
 // ===== dof helper function =====
 // Concentric disk sampling (returns a point on unit disk)
@@ -348,65 +1004,72 @@ __global__ void computeIntersections(
     PathSegment* pathSegments,
     Geom* geoms,
     int geoms_size,
-    ShadeableIntersection* intersections)
+    ShadeableIntersection* intersections,
+    const BVHNode* __restrict__ bvhNodes,
+    const int* __restrict__ primIdx,
+    const Tri* __restrict__ tris,
+    const TriBVHNode* __restrict__ triNodes,
+    const int* __restrict__ triPrimIdx)
 {
     int path_index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (path_index >= num_paths) return;
 
-    if (path_index < num_paths)
+    const PathSegment seg = pathSegments[path_index];
+    float     bestT = FLT_MAX;
+    glm::vec3 bestN = glm::vec3(0.f);
+    int       bestGeom = -1;
+    int       bestMat = -1;
+
+#if ENABLE_BVH
+    if (bvhNodes != nullptr && primIdx != nullptr) {
+        traverseBVH(seg.ray, bvhNodes, primIdx, geoms, tris,
+            triNodes, triPrimIdx,              
+            bestT, bestGeom, bestN, bestMat);
+
+    }
+    else
+#endif
     {
-        PathSegment pathSegment = pathSegments[path_index];
+        bool outside = true; glm::vec3 pTmp, nTmp;
+        for (int i = 0; i < geoms_size; ++i) {
+            const Geom& g = geoms[i];
 
-        float t;
-        glm::vec3 intersect_point;
-        glm::vec3 normal;
-        float t_min = FLT_MAX;
-        int hit_geom_index = -1;
-        bool outside = true;
-
-        glm::vec3 tmp_intersect;
-        glm::vec3 tmp_normal;
-
-        // naive parse through global geoms
-
-        for (int i = 0; i < geoms_size; i++)
-        {
-            Geom& geom = geoms[i];
-
-            if (geom.type == CUBE)
-            {
-                t = boxIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+            if (g.type == CUBE) {
+                float t = boxIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
+                if (t > 0.0f && t < bestT) { bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid; }
             }
-            else if (geom.type == SPHERE)
-            {
-                t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+            else if (g.type == SPHERE) {
+                float t = sphereIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
+                if (t > 0.0f && t < bestT) { bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid; }
             }
-            // TODO: add more intersection tests here... triangle? metaball? CSG?
+            else if (g.type == MESH) {
+                if (tris == nullptr) continue;                   
+                AABB box; box.minB = g.bboxMin; box.maxB = g.bboxMax;
+                if (!intersectAABB(box, seg.ray, bestT)) continue;
 
-            // Compute the minimum t from the intersection tests to determine what
-            // scene geometry object was hit first.
-            if (t > 0.0f && t_min > t)
-            {
-                t_min = t;
-                hit_geom_index = i;
-                intersect_point = tmp_intersect;
-                normal = tmp_normal;
+                for (int k = 0; k < g.triCount; ++k) {
+                    const Tri& tr = tris[g.triOffset + k];
+                    float tHit = intersectTriangleMT(seg.ray, tr);
+                    if (tHit > 0.0f && tHit < bestT) {
+                        bestT = tHit;
+                        bestN = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
+                        bestGeom = i; bestMat = tr.materialId;
+                    }
+                }
             }
-        }
-
-        if (hit_geom_index == -1)
-        {
-            intersections[path_index].t = -1.0f;
-        }
-        else
-        {
-            // The ray hits something
-            intersections[path_index].t = t_min;
-            intersections[path_index].materialId = geoms[hit_geom_index].materialid;
-            intersections[path_index].surfaceNormal = normal;
         }
     }
-}
 
+    if (bestGeom < 0) {
+        intersections[path_index].t = -1.0f;
+    }
+    else {
+        if (glm::dot(bestN, seg.ray.direction) > 0.0f) bestN = -bestN;
+        intersections[path_index].t = bestT;
+        intersections[path_index].surfaceNormal = bestN;
+        intersections[path_index].materialId = bestMat;
+    }
+}
 
 
 __global__ void shadeMaterial(
@@ -414,99 +1077,145 @@ __global__ void shadeMaterial(
     int num_paths,
     ShadeableIntersection* shadeableIntersections,
     PathSegment* pathSegments,
-    Material* materials)
+    Material* materials,
+    int traceDepth,
+    int rrMinDepth,
+    bool rrEnabled)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_paths) return;
 
     PathSegment& pathSegment = pathSegments[idx];
-
-    // Do not process already-terminated paths (prevents repeated light hits)
     if (pathSegment.remainingBounces <= 0) return;
 
-    ShadeableIntersection intersection = shadeableIntersections[idx];
-
-    if (intersection.t > 0.0f) {
-        Material material = materials[intersection.materialId];
-
-        // Emissive: accumulate once, then terminate and return
-        if (material.emittance > 0.0f) {
-            pathSegment.color *= (material.color * material.emittance);
-            pathSegment.remainingBounces = 0;
-            return; 
-        }
-
-
-        // Common data: hit point, normal, and RNG bound to pixelIndex so it's stable under sorting/compaction
-        glm::vec3 p = pathSegment.ray.origin + intersection.t * pathSegment.ray.direction;
-        glm::vec3 n = glm::normalize(intersection.surfaceNormal);
-        thrust::default_random_engine rng = makeSeededRandomEngine(
-            iter, pathSegment.pixelIndex, pathSegment.remainingBounces);
-        thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
-
-        // === Refractive (glass) branch with Schlick Fresnel ===
-        if (material.hasRefractive) {
-            // wo points into the scene
-            const glm::vec3 wo = pathSegment.ray.direction;
-
-            // Determine whether we are entering or exiting
-            bool entering = glm::dot(wo, n) < 0.0f;
-            glm::vec3 N = entering ? n : -n;
-
-            // Indices of refraction
-            float etaI = entering ? 1.0f : material.indexOfRefraction;
-            float etaT = entering ? material.indexOfRefraction : 1.0f;
-            float eta = etaI / etaT;
-
-            // cos(theta_i) in [0,1]
-            float cosI = fminf(1.0f, fmaxf(0.0f, -glm::dot(wo, N)));
-
-            // Try to refract; total internal reflection if glm::refract returns (0,0,0)
-            glm::vec3 tdir = glm::refract(wo, N, eta);
-            bool tir = (tdir.x == 0.0f && tdir.y == 0.0f && tdir.z == 0.0f);
-
-            // Schlick approximation for reflection probability
-            float r0 = (etaI - etaT) / (etaI + etaT);
-            r0 = r0 * r0;
-            float R = r0 + (1.0f - r0) * powf(1.0f - cosI, 5.0f);
-
-            float xi = u01(rng);
-
-            // Small offset to avoid self-intersection
-            const float EPS = 1e-3f;
-
-            if (tir || xi < R) {
-                // Reflect
-                glm::vec3 rdir = glm::reflect(wo, N);
-                pathSegment.ray.origin = p + N * EPS;
-                pathSegment.ray.direction = glm::normalize(rdir);
-            }
-            else {
-                // Refract
-                pathSegment.ray.origin = p - N * EPS;
-                pathSegment.ray.direction = glm::normalize(tdir);
-            }
-
-            pathSegment.remainingBounces--;
-            return; 
-        }
-
-
-        // Still has bounces left: scatter
-        if (pathSegment.remainingBounces > 0) {
-            scatterRay(pathSegment, p, n, material, rng);
-        }
-        else {
-            pathSegment.color = glm::vec3(0.0f);
-            pathSegment.remainingBounces = 0;
-        }
-    }
-    else {
-        // Miss: no environment light then go black and terminate
+    const ShadeableIntersection isect = shadeableIntersections[idx];
+    if (isect.t <= 0.0f) {
         pathSegment.color = glm::vec3(0.0f);
         pathSegment.remainingBounces = 0;
+        return;
+    }
+
+    const Material material = materials[isect.materialId];
+
+    // Emissive
+    if (material.emittance > 0.0f) {
+        if (glm::dot(isect.surfaceNormal, -pathSegment.ray.direction) > 0.0f) {
+            pathSegment.color *= (material.color * material.emittance);
+        }
+        pathSegment.remainingBounces = 0;
+        return;
+    }
+
+    glm::vec3 p = pathSegment.ray.origin + isect.t * pathSegment.ray.direction;
+    glm::vec3 n = glm::normalize(isect.surfaceNormal);
+    if (glm::dot(n, -pathSegment.ray.direction) < 0.0f) n = -n;
+
+    thrust::default_random_engine rng =
+        makeSeededRandomEngine(iter, pathSegment.pixelIndex, pathSegment.remainingBounces);
+    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
+
+    const int bouncesDone = traceDepth - pathSegment.remainingBounces;
+
+    // Refractive / glass
+    if (material.hasRefractive > 0.0f) {
+        if (rrEnabled && bouncesDone >= rrMinDepth) {
+            float pSurvive = fmaxf(fmaxf(pathSegment.color.x, pathSegment.color.y), pathSegment.color.z);
+            pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
+            if (u01(rng) > pSurvive) {
+                pathSegment.color = glm::vec3(0.0f);
+                pathSegment.remainingBounces = 0;
+                return;
+            }
+            else {
+                pathSegment.color *= (1.0f / pSurvive);
+            }
+        }
+
+        const glm::vec3 wo = pathSegment.ray.direction;
+        const bool entering = (glm::dot(wo, n) < 0.0f);
+        const glm::vec3 N = entering ? n : -n;
+
+        float etaI = entering ? 1.0f : material.indexOfRefraction;
+        float etaT = entering ? material.indexOfRefraction : 1.0f;
+        float eta = etaI / etaT;
+
+        float cosI = fminf(1.0f, fmaxf(0.0f, -glm::dot(wo, N)));
+        glm::vec3 idealT = glm::refract(wo, N, eta);
+        bool tir = (idealT.x == 0.0f && idealT.y == 0.0f && idealT.z == 0.0f);
+
+        float r0 = (etaI - etaT) / (etaI + etaT); r0 *= r0;
+        float R = r0 + (1.0f - r0) * powf(1.0f - cosI, 5.0f);
+
+        // Roughness 
+        float rough = fmaxf(0.0f, fminf(material.roughness, 1.0f));
+
+        auto sampleAroundDir = [&](const glm::vec3& dir) -> glm::vec3 {
+            if (rough <= 1e-6f) return glm::normalize(dir);
+            float alpha = fmaxf(1e-4f, rough);
+            float k = fmaxf(0.0f, 1.0f / (alpha * alpha) - 1.0f);
+            float u1 = u01(rng);
+            float u2 = u01(rng);
+            float cosTheta = powf(u1, 1.0f / (k + 1.0f));
+            float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+            float phi = 2.0f * PI * u2;
+
+            glm::vec3 d = glm::normalize(dir);
+            glm::vec3 t = (fabsf(d.z) < 0.999f)
+                ? glm::normalize(glm::cross(glm::vec3(0, 0, 1), d))
+                : glm::normalize(glm::cross(glm::vec3(0, 1, 0), d));
+            glm::vec3 b = glm::cross(d, t);
+
+            glm::vec3 local(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
+            glm::vec3 world = local.x * t + local.y * b + local.z * d;
+            return glm::normalize(world);
+            };
+
+        // Continuous reflectivity 
+        float reflectiveMix = glm::clamp(material.hasReflective, 0.0f, 1.0f);
+        float reflectProb = reflectiveMix * R;
+
+        const float EPS = 2e-3f;
+        float xi = u01(rng);
+
+        if (tir || xi < reflectProb) {
+            glm::vec3 idealR = glm::reflect(wo, N);
+            glm::vec3 rdir = sampleAroundDir(idealR);
+            pathSegment.ray.origin = p + N * EPS;
+            pathSegment.ray.direction = rdir;
+        }
+        else {
+            glm::vec3 tdir = sampleAroundDir(idealT);
+            pathSegment.ray.origin = p - N * EPS;
+            pathSegment.ray.direction = tdir;
+
+        }
+
+        pathSegment.remainingBounces--;
+        return;
+    }
+
+    // Diffuse 
+    {
+        glm::vec3 albedo = glm::clamp(material.color, glm::vec3(0.f), glm::vec3(1.f));
+        glm::vec3 prospective = pathSegment.color * albedo;
+
+        if (rrEnabled && bouncesDone >= rrMinDepth) {
+            float pSurvive = fmaxf(fmaxf(prospective.x, prospective.y), prospective.z);
+            pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
+            if (u01(rng) > pSurvive) {
+                pathSegment.color = glm::vec3(0.0f);
+                pathSegment.remainingBounces = 0;
+                return;
+            }
+            else {
+                pathSegment.color *= (1.0f / pSurvive);
+            }
+        }
+
+        scatterRay(pathSegment, p, n, material, rng);
     }
 }
+
 
 
 // Add the current iteration's output to the overall image
@@ -595,7 +1304,17 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_paths,
             dev_geoms,
             hst_scene->geoms.size(),
-            dev_intersections
+            dev_intersections,
+#if ENABLE_BVH
+            (gEnableBVH ? dev_bvhNodes : nullptr),
+            (gEnableBVH ? dev_primIndices : nullptr),
+#else
+            nullptr,
+            nullptr,
+#endif
+            dev_tris,
+            (gEnableTriBVH ? dev_triBVHNodes : nullptr),  
+            (gEnableTriBVH ? dev_triPrimIdx : nullptr)   
             );
         checkCUDAError("trace one bounce");
         cudaDeviceSynchronize();
@@ -641,13 +1360,28 @@ void pathtrace(uchar4* pbo, int frame, int iter)
         }
 #endif
 
-        shadeMaterial << <numblocksPathSegmentTracing, blockSize1d >> > (
+
+        int rrEnabled =
+#if ENABLE_RR
+        (GetRREnabled() ? 1 : 0);
+#else
+            0;
+#endif
+
+        int rrMinDepth = GetRRMinDepth();
+        rrMinDepth = glm::clamp(rrMinDepth, 1, traceDepth - 1);
+
+        shadeMaterial<<<numblocksPathSegmentTracing, blockSize1d>>>(
             iter,
             num_paths,
             dev_intersections,
             dev_paths,
-            dev_materials
+            dev_materials,
+            traceDepth,
+            rrMinDepth,
+            rrEnabled
             );
+
         checkCUDAError("shadeMaterial");
 
 #if ENABLE_STREAM_COMPACTION
