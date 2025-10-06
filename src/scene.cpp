@@ -35,6 +35,8 @@ void Scene::loadFromJSON(const std::string& jsonName)
 {
     std::ifstream f(jsonName);
     json data = json::parse(f);
+
+
     const auto& materialsData = data["Materials"];
     std::unordered_map<std::string, uint32_t> MatNameToID;
     for (const auto& item : materialsData.items())
@@ -42,11 +44,15 @@ void Scene::loadFromJSON(const std::string& jsonName)
         const auto& name = item.key();
         const auto& p = item.value();
         Material newMaterial{};
+        newMaterial.roughness = 0.0f;
         // TODO: handle materials loading differently
         if (p["TYPE"] == "Diffuse")
         {
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+            if (p.contains("ROUGHNESS")) {
+                newMaterial.roughness = (float)p["ROUGHNESS"]; 
+            }
         }
         else if (p["TYPE"] == "Emitting")
         {
@@ -58,6 +64,9 @@ void Scene::loadFromJSON(const std::string& jsonName)
         {
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+            if (p.contains("ROUGHNESS")) {
+                newMaterial.roughness = (float)p["ROUGHNESS"]; 
+            }
         }
         else if (p["TYPE"] == "Refractive")
         {
@@ -65,7 +74,12 @@ void Scene::loadFromJSON(const std::string& jsonName)
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
             newMaterial.hasRefractive = 1.0f;
-            newMaterial.hasReflective = 1.0f; // Fresnel split in shader
+            if (p.contains("REFLECTIVE")) {
+                newMaterial.hasReflective = (float)p["REFLECTIVE"];
+            }
+            else {
+                newMaterial.hasReflective = 1.0f; // default full Fresnel
+            } 
             if (p.contains("IOR")) {
                 newMaterial.indexOfRefraction = (float)p["IOR"];
             }
@@ -75,6 +89,9 @@ void Scene::loadFromJSON(const std::string& jsonName)
             else {
                 newMaterial.indexOfRefraction = 1.5f; // default glass IOR
             }
+            if (p.contains("ROUGHNESS")) {
+                newMaterial.roughness = (float)p["ROUGHNESS"];
+            }
         }
         MatNameToID[name] = materials.size();
         materials.emplace_back(newMaterial);
@@ -83,6 +100,25 @@ void Scene::loadFromJSON(const std::string& jsonName)
     for (const auto& p : objectsData)
     {
         const auto& type = p["TYPE"];
+        if (type == "mesh" || type == "gltf")
+        {
+            int matId = MatNameToID[p["MATERIAL"]];
+            const auto& trans = p["TRANS"];
+            const auto& rotat = p["ROTAT"];
+            const auto& scale = p["SCALE"];
+            glm::vec3 T(trans[0], trans[1], trans[2]);
+            glm::vec3 R(rotat[0], rotat[1], rotat[2]);
+            glm::vec3 S(scale[0], scale[1], scale[2]);
+            glm::mat4 M = utilityCore::buildTransformationMatrix(T, R, S);
+
+            MeshInstance mi;
+            mi.path = p["FILE"];   
+            mi.materialId = matId;
+            mi.M_world = M;
+            meshInstances.push_back(mi);
+            continue; 
+        }
+
         Geom newGeom;
         if (type == "cube")
         {

@@ -9,6 +9,10 @@
       "TYPE": "Diffuse",
       "RGB": [ 0.98, 0.98, 0.98 ]
     },
+    "diffuse_gray": {
+      "TYPE": "Diffuse",
+      "RGB": [ 0.3, 0.3, 0.3 ]
+    },
     "diffuse_red": {
       "TYPE": "Diffuse",
       "RGB": [ 0.85, 0.35, 0.35 ]
@@ -25,7 +29,9 @@
     "glass": {
       "TYPE": "Refractive",
       "RGB": [ 1.0, 1.0, 1.0 ],
-      "IOR": 1.5
+      "IOR": 1.5,
+      "ROUGHNESS": 0.0,
+      "REFLECTIVE": 0.5
     }
   },
   "Camera": {
@@ -81,10 +87,11 @@
       "ROTAT": [ 0.0, 0.0, 0.0 ],
       "SCALE": [ 0.01, 10.0, 10.0 ]
     },
+
     {
-      "TYPE": "sphere",
+      "TYPE": "SPHERE",
       "MATERIAL": "glass",
-      "TRANS": [ -1.0, 4.0, -1.0 ],
+      "TRANS": [ -1.0, 1.6, -1.0 ],
       "ROTAT": [ 0.0, 0.0, 0.0 ],
       "SCALE": [ 3.0, 3.0, 3.0 ]
     }
