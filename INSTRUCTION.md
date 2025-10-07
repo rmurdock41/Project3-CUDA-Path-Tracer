@@ -114,7 +114,8 @@ This list is not comprehensive. If you have a particular idea you would like to 
     * [obj2gltf](https://github.com/CesiumGS/obj2gltf) can be used to convert OBJ to glTF files. You can find similar projects for FBX and other formats.
   * You can use the triangle intersection function `glm::intersectRayTriangle`.
   * Bounding volume intersection culling: reduce the number of rays that have to be checked against the entire mesh by first checking rays against a volume that completely bounds the mesh. For full credit, provide performance analysis with and without this optimization.
-  > Note: This goes great with the Hierarcical Spatial Data Structures.
+    
+    > Note: This goes great with the Hierarcical Spatial Data Structures.
 
 #### Performance Improvements
 
@@ -128,7 +129,7 @@ This list is not comprehensive. If you have a particular idea you would like to 
   * If implemented in conjunction with Arbitrary mesh loading (required for this year), this qualifies as the toggleable bounding volume intersection culling.
   * See below for more resources
 * :six: [Wavefront pathtracing](https://research.nvidia.com/publication/megakernels-considered-harmful-wavefront-path-tracing-gpus):
-Group rays by material without a sorting pass. A sane implementation will require considerable refactoring, since every supported material suddenly needs its own kernel.
+  Group rays by material without a sorting pass. A sane implementation will require considerable refactoring, since every supported material suddenly needs its own kernel.
 * :three: [*Open Image AI Denoiser or an alternative approve image denoiser*](https://github.com/OpenImageDenoise/oidn) Open Image Denoiser is an image denoiser which works by applying a filter on Monte-Carlo-based pathtracer output. The denoiser runs on the CPU and takes in path tracer output from 1spp to beyond. In order to get full credit for this, you must pass in at least one extra buffer along with the [raw "beauty" buffer](https://github.com/OpenImageDenoise/oidn#open-image-denoise-overview). **Ex:** Beauty + Normals.
   * Part of this extra credit is figuring out where the filter should be called, and how you should manage the data for the filter step.
   * It is important to note that integrating this is not as simple as it may seem at first glance. Library integration, buffer creation, device compatibility, and more are all real problems which will appear, and it may be hard to debug them. Please only try this if you have finished the Part 2 early and would like extra points. While this is difficult, the result would be a significantly faster resolution of the path traced image.
@@ -163,19 +164,27 @@ For each extra feature, you must provide the following analysis:
 You'll be working in the following files. Look for important parts of the code:
 
 * Search for `CHECKITOUT`.
+
 * You'll have to implement parts labeled with `TODO`. (But don't let these constrain you - you have free rein!)
 
 * `src/pathtrace.h`/`cu`: path tracing kernels, device functions, and calling code
+  
   * `pathtraceInit` initializes the path tracer state - it should copy scene data (e.g. geometry, materials) from `Scene`.
   * `pathtraceFree` frees memory allocated by `pathtraceInit`
   * `pathtrace` performs one iteration of the rendering - it handles kernel launches, memory copies, transferring some data, etc.
     * See comments for a low-level path tracing recap.
+
 * `src/intersections.h`/`cu`: ray intersection functions
+  
   * `boxIntersectionTest` and `sphereIntersectionTest`, which take in a ray and a geometry object and return various properties of the intersection.
+
 * `src/interactions.h`/`cu`: ray scattering functions
+  
   * `calculateRandomDirectionInHemisphere`: a cosine-weighted random direction in a hemisphere. Needed for implementing diffuse surfaces.
   * `scatterRay`: this function should perform all ray scattering, and will call `calculateRandomDirectionInHemisphere`. See comments for details.
+
 * `src/main.cpp`: you don't need to do anything here, but you can change the program to save `.hdr` image files, if you want (for postprocessing).
+
 * `stream_compaction`: A dummy folder into which you should place your Stream Compaction implementation from Project 2. It should be sufficient to copy the files from [here](https://github.com/CIS5650-Fall-2024/Project2-Stream-Compaction/tree/main/stream_compaction)
 
 ### Generating random numbers
@@ -333,11 +342,13 @@ In addition:
 ### Analysis
 
 * Stream compaction helps most after a few bounces. Print and plot the effects of stream compaction within a single iteration (i.e. the number of unterminated rays after each bounce) and evaluate the benefits you get from stream compaction.
+
 * Compare scenes which are open (like the given cornell box) and closed (i.e. no light can escape the scene). Again, compare the performance effects of stream compaction! Remember, stream compaction only affects rays which terminate, so what might you expect?
+
 * For optimizations that target specific kernels, we recommend using stacked bar graphs to convey total execution time and improvements in individual kernels. For example:
-
+  
   ![Clearly the Macchiato is optimal.](img/stacked_bar_graph.png)
-
+  
   Timings from NSight should be very useful for generating these kinds of charts.
 
 ## Submit
