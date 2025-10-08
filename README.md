@@ -46,28 +46,15 @@ Used `glm::refract` to calculate ideal refraction direction and **Schlick's appr
 
 For **roughness** implementation, the material.roughness parameter controls surface roughness by importance sampling around the ideal reflection or refraction direction. The sampling uses a modified Phong distribution model where higher roughness values produce stronger light scattering, creating realistic frosted effects. 
 
-**Performance Analysis:**
-
-| Scene Type                                | FPS | vs Pure Diffuse |
-| ----------------------------------------- | --- | --------------- |
-| Single smooth glass sphere (roughness=0)  | 45  | -25%            |
-| Single rough glass sphere (roughness=0.3) | 42  | -30%            |
-| Multiple glass objects                    | 28  | -42%            |
-| Mixed glass + diffuse                     | 38  | -35%            |
-
 **Analysis:**
 
-Refractive materials increase ray tracing computation as light undergoes multiple reflections and refractions inside transparent objects, resulting in longer ray paths that require more intersection tests and shading calculations. Rough surfaces add overhead primarily from additional random number generation (2 random numbers per sample) and tangent space coordinate transformations, but produce realistic frosted glass effects. 
-
-Performance data shows that closed scenes experience more pronounced performance impact from refractive materials because rays struggle to escape the scene, continuously bouncing between transparent objects and other surfaces, further increasing average path length. In contrast, open scenes experience relatively smaller performance drops as some refracted rays exit the scene boundaries and terminate early. Scenes with multiple glass objects show the most significant performance degradation in both scene types, as rays bounce multiple times between transparent surfaces, substantially increasing computational burden.
-
-
+Refractive materials cause light to undergo multiple reflections and refractions inside transparent objects, forming complex light paths. Each refraction event requires computing Fresnel coefficients and probabilistically determining reflection versus refraction. Rough refractive surfaces perturb the ideal refraction direction through importance sampling, producing realistic frosted glass effects. In scenes with multiple refractive objects, rays can bounce multiple times between transparent surfaces - for example, light entering a glass sphere, reflecting internally, refracting out, then entering another nearby glass object.
 
 ### Specular Reflection
 
 Implemented perfect specular reflection materials with roughness parameter support, simulating effects from perfect mirrors to rough metallic surfaces.
 
-Reference: [PBRv4 9.2](https://pbr-book.org/4ed/Reflection_Models/Specular_Reflection_and_Transmission)
+
 
 ![Specular Reflection](img/specular.png)
 
@@ -77,27 +64,19 @@ Reference: [PBRv4 9.2](https://pbr-book.org/4ed/Reflection_Models/Specular_Refle
 
 Used `glm::reflect` to calculate ideal reflection direction, with material.roughness parameter controlling surface roughness. For perfect mirrors (roughness=0), rays bounce strictly according to the law of reflection. When roughness is greater than 0, importance sampling is performed around the ideal reflection direction using a modified Phong distribution model. Sampling uses a `cosθ^k` distribution where `k = 1/(α²) - 1` and `α = roughness`. Higher roughness values produce larger scattering ranges for reflected rays, with surfaces exhibiting more diffuse characteristics. The system supports material.hasReflective parameter to control reflection strength, enabling partial reflection effects. Material color acts as the Fresnel term for reflection, affecting the color of reflected light.
 
-
-
 ### Depth of Field
 
 Implemented physically-based thin lens camera model to simulate realistic depth of field effects by sampling on the aperture.
 
-| No DOF                      | with DOF                             |
-| --------------------------- | ------------------------------------ |
-| ![No DOF](img/dof_none.png) | ![Large Aperture](img/dof_large.png) |
+| No DOF                          | with DOF                       |
+| ------------------------------- | ------------------------------ |
+| ![No DOF](img/without%20RR.png) | ![Large Aperture](img/DOF.png) |
 
 **Implementation Details:**
 
 Used concentric disk sampling to generate ray origins on the aperture plane, which maps a square to a unit disk, avoiding waste from traditional rejection sampling and providing more uniform distribution. All rays pass through the same point on the focal plane to achieve focus effects. 
 
 The system provides two configurable parameters: apertureRadius controls blur strength, and focalDistance controls focus position. The implementation flow calculates the standard camera ray direction first, then computes the ray's intersection with the focal plane, samples an offset point on the aperture using concentric disk sampling, and finally shoots a ray from the offset point toward the focal plane intersection point.
-
-**Performance Impact:**
-
-| Test Scene    | No DOF(Open) | No DOF(Closed) | With DOF(Open) | With DOF(Closed) | Performance Difference |
-| ------------- | ------------ | -------------- | -------------- | ---------------- | ---------------------- |
-| Complex Scene |              | 38 fps         | 36 fps         | 36 fps           | ~5.3%                  |
 
 **Analysis:**
 
@@ -111,9 +90,9 @@ Data shows that both open and closed scenes experience consistent overhead. This
 
 Implemented complete glTF 2.0 model loading and rendering using TinyGLTF library, supporting import and rendering of arbitrary triangle meshes.
 
-| Stanford Bunny (69,451 tris) | Lady Maria (1,013,600 tris)       |
-| ---------------------------- | --------------------------------- |
-| ![Bunny](img/bunny.png)      | ![Lady Maria](img/lady_maria.png) |
+| Stanford Bunny (69,451 tris)   | Lady Maria (1,013,600 tris)   |
+| ------------------------------ | ----------------------------- |
+| ![Bunny](img/without%20RR.png) | ![Lady Maria](img/glTFLM.png) |
 
 **Implementation Details:**
 
@@ -123,10 +102,6 @@ Implemented complete glTF 2.0 file parsing and geometry data extraction pipeline
 
 glTF model loading itself has no direct impact on runtime performance as model parsing and data upload are completed during initialization. Runtime performance primarily depends on triangle count and intersection testing efficiency. For models like Stanford Bunny with approximately 70,000 triangles and Lady Maria with over 1 million triangles, BVH acceleration structures have critical performance implications (see BVH section for detailed performance analysis). Triangle data is stored in contiguous arrays on GPU, favoring cache hits and reducing memory access latency. The advantage of glTF format lies in its standardization and widespread support, allowing convenient export from various 3D modeling software and supporting complex scene hierarchies and material definitions.
 
-
-
-
-
 ---
 
 ## Performance Optimizations
@@ -134,10 +109,6 @@ glTF model loading itself has no direct impact on runtime performance as model p
 ### Bounding Volume Hierarchy (BVH)
 
 Implemented hierarchical spatial acceleration structure using axis-aligned bounding boxes (AABB), dramatically reducing ray-triangle intersection tests. Uses Surface Area Heuristic (SAH) for CPU-side BVH construction and iterative stack-based traversal on GPU.
-
-
-
-
 
 | ![BVH Visualization](img/bvh_structure.png) | ![Performance Chart](img/bvh_performance.png) |
 | ------------------------------------------- | --------------------------------------------- |
@@ -164,7 +135,7 @@ Constructed BVH tree recursively on CPU using Surface Area Heuristic for optimal
 
 | Scene          | Triangle Count | Mesh BVH Nodes | Scene BVH Nodes |
 | -------------- | -------------- | -------------- | --------------- |
-| Multiball      |                |                |                 |
+| Multiball      | -              | -              |                 |
 | Stanford Bunny | 69,451         | 40,597         | 3               |
 | Lady Maria     | 1,013,600      | 524,287        | 3               |
 
@@ -177,6 +148,8 @@ BVH acceleration structure reduces linear search complexity from O(n) to O(log n
 For Stanford Bunny with 70,000 triangles, BVH reduces average triangles tested per ray from 69,451 to tens, achieving several to tenfold performance improvement. For Lady Maria with 1 million triangles, rendering without BVH is nearly impossible (<1 fps), while BVH provides tens to hundreds of times speedup, enabling real-time rendering. 
 
 Comparing open and closed scenes shows that BVH acceleration effectiveness is largely independent of scene type, as BVH primarily optimizes the intersection testing stage rather than ray bouncing behavior. Closed scenes have lower baseline FPS due to more ray bounces, but BVH speedup ratios remain similar across both scene types. Two-level BVH structure enables efficient handling of scenes with multiple complex models: scene-level BVH quickly locates potentially intersected objects, mesh-level BVH rapidly finds intersected triangles within objects. Iterative traversal on GPU avoids recursion overhead and stack overflow issues, with fixed 64-level stack satisfying most scene requirements. AABB intersection testing uses slab method, computationally simple and efficient, suitable for GPU's SIMD architecture.
+
+
 
 ### Russian Roulette Path Termination
 
@@ -194,7 +167,7 @@ Implemented probability-based termination strategy using path throughput. The sy
 
 **Performance Analysis:**
 
-**Open Scene (Cornell Box):**
+**Open Scene :**
 
 | Configuration   | FPS    | vs No RR |
 | --------------- | ------ | -------- |
@@ -202,7 +175,7 @@ Implemented probability-based termination strategy using path throughput. The sy
 | RR (minDepth=1) | XX fps | +XX%     |
 | RR (minDepth=3) | XX fps | +XX%     |
 
-**Closed Scene (Enclosed Room):**
+**Closed Scene :**
 
 | Configuration   | FPS    | vs No RR |
 | --------------- | ------ | -------- |
@@ -215,3 +188,75 @@ Implemented probability-based termination strategy using path throughput. The sy
 Russian Roulette improves performance by early terminating low-contribution paths while maintaining unbiasedness through energy compensation. In open scenes, many rays naturally exit scene boundaries and terminate, making RR's effect relatively limited but still providing performance improvements. 
 
 In closed scenes, rays are trapped inside and continue bouncing, making RR's effect more pronounced with significantly higher performance gains. The choice of minDepth parameter affects performance benefits: minDepth=1 allows termination after the first bounce, potentially achieving higher performance gains; minDepth=3 guarantees the first 3 bounces are not terminated, ensuring basic multi-bounce lighting is correctly captured, representing a balanced choice between performance and quality. Rendered results show that images with different minDepth settings and with/without RR are visually indistinguishable, validating RR's unbiasedness. Through extensive sampling, random termination introduced by RR produces no noticeable bias or noise, with virtually identical image quality. This makes RR a performance optimization technique with virtually no quality loss.
+
+### Material Sorting
+
+Implemented ray sorting by material type before shading to group rays interacting with the same material in contiguous memory, improving GPU warp coherence and reducing thread divergence.
+
+**Implementation Details:**
+
+The material sorting system uses a three-stage pipeline for each bounce. First, each ray is assigned a material key based on its intersection, with missed rays assigned `INT_MAX` to sort them to the end of the array. Then `thrust::stable_sort_by_key` sorts material keys while maintaining ray indices. Finally, `thrust::gather` reorders both `PathSegment` and `ShadeableIntersection` arrays according to the sorted indices. The system supports runtime toggling via `SetMaterialSortEnabled()`.
+
+**Performance Analysis:**
+
+| Scene Type           | Material Count                  | Without Sorting | With Sorting | Performance Change |
+| -------------------- | ------------------------------- | --------------- | ------------ | ------------------ |
+| Cornell Box (Closed) | 3 (diffuse, specular, emissive) | 44 fps          | 29 fps       | -34%               |
+| Cornell Box + Bunny  | 3 (diffuse, bunny, emissive)    | 43 fps          | 32 fps       | -25%               |
+| Simple Open Scene    | 20+ materials                   | 51 fps          | 42 fps       | -18%               |
+
+**Analysis:**
+
+Material sorting performs as a negative optimization across all test scenes, with performance degradation ranging from 18% to 34%. Even in the complex open scene with over 20 material types, sorting still causes an 18% performance loss.
+
+The Cornell Box closed scene shows the largest performance degradation (-34%). With only 3 material types, material distribution is already relatively concentrated, resulting in low baseline warp divergence. The overhead from sorting operations each bounce (`buildMaterialKeys`, `thrust::stable_sort_by_key`, two `thrust::gather` calls) exceeds any benefits from reduced divergence. The higher baseline framerate (44 fps) means shorter frame time, making sorting's fixed overhead represent a larger fraction of total time.
+
+The Bunny scene shows 25% performance degradation. With the same 3 material types, but 69,451 triangles causing BVH traversal to dominate execution time, material shading represents only a small fraction of total time. Even complete elimination of material shading divergence has limited impact on overall performance. Sorting overhead cannot be offset by shading optimizations.
+
+The simple open scene contains 20+ different materials (multiple refractive types, specular variations, roughness changes), theoretically the most favorable case for material sorting. However, it still shows 18% performance degradation. Despite high material diversity, the O(n log n) complexity and global memory access overhead of sorting still exceed the benefits from reduced warp divergence. This scene has the highest baseline framerate (51 fps), indicating lighter computational burden, making sorting overhead's relative impact more apparent.
+
+**Conclusion:**
+
+Material sorting is a negative optimization across all test scenes. Even with over 20 material types, sorting overhead exceeds its benefits. This indicates that in the current implementation, the fixed cost of sorting operations (memory access, sorting algorithm itself) is too high to be offset by warp coherence improvements. This optimization is disabled by default across all scenes.
+
+### Stream Compaction
+
+Implemented work-efficient stream compaction using the scan-based algorithm from Project 2 to remove terminated paths and improve GPU utilization.
+
+**Implementation Details:**
+
+Stream compaction uses a three-kernel pipeline to remove dead rays. `kernFlagAlive` marks each path as alive (1) or terminated (0) based on `remainingBounces > 0`, with terminated paths having their colors set to zero. `scanDevice` performs a parallel prefix sum on the flag array to compute output indices for alive rays, using the work-efficient scan implementation from Project 2. `kernScatterPaths` scatters alive rays to the computed indices, compacting them into contiguous memory. Both `PathSegment` and `ShadeableIntersection` arrays are compacted to maintain correspondence. Before compaction, the `accumulateTerminated` kernel atomically adds terminated ray colors to the output image, ensuring no light contributions are lost.
+
+**Performance Analysis:**
+
+| Scene Type           | Without Compaction | With Compaction | Speedup |
+| -------------------- | ------------------ | --------------- | ------- |
+| Cornell Box (Closed) | 44 fps             | 52 fps          | +18%    |
+| Cornell Box + Bunny  | 30 fps             | 32 fps          | +7%     |
+| Simple Open Scene    | 13 fps             | 48 fps          | +269%   |
+
+**Analysis:**
+
+Stream compaction's performance improvement varies significantly across scenes, ranging from 7% to 269%, reflecting fundamental differences in scene geometry and ray termination patterns.
+
+The simple open scene shows the largest performance improvement (+269%). This scene contains nested refractive spheres and multiple material types but no enclosing walls, causing many rays to escape scene boundaries after early bounces. Without compaction, terminated rays still occupy GPU resources executing useless kernel calls. Compaction begins reducing ray count from early bounces, significantly decreasing computation in subsequent bounces. The low baseline framerate (13 fps) indicates severe computational waste without compaction.
+
+The Cornell Box closed scene achieves moderate improvement (+18%). In the enclosed environment, rays remain trapped and can only terminate by reaching maximum depth, hitting light sources, or through Russian Roulette. Rays terminate gradually over multiple bounces, with compaction benefits accumulating in later bounces. The higher baseline framerate (44 fps) indicates the scene itself has lighter computational burden, limiting compaction's absolute gains.
+
+The Bunny scene shows minimal improvement (+7%). The Stanford Bunny contains 69,451 triangles, with BVH traversal and triangle intersection tests dominating execution time. While stream compaction reduces ray count, each remaining ray still requires expensive BVH traversal. Compaction primarily optimizes material shading and memory access, which represent a smaller fraction of total execution time. The lower baseline framerate (30 fps) reflects that geometric complexity, not ray management, is the primary bottleneck.
+
+**Conclusion:**
+
+Stream compaction provides positive gains across all test scenes but is highly dependent on scene characteristics. Open scenes achieve extreme benefits from rapid ray escape, closed simple scenes gain steady improvements, and geometrically complex scenes show limited gains due to other bottlenecks. This optimization is enabled by default across all scenes.
+
+### Antialiasing
+
+Implemented stochastic sampled antialiasing by randomly jittering ray positions within each pixel to reduce aliasing artifacts.
+
+**Implementation Details:**
+
+In the `generateRayFromCamera` kernel, each ray receives a random offset within its pixel. Random numbers `jx` and `jy` in the range [0, 1) are generated using `thrust::uniform_real_distribution` and applied to the sub-pixel coordinate calculation. The random number generator is seeded using `makeSeededRandomEngine` based on iteration number and pixel index, ensuring different jitter patterns across iterations. Over multiple iterations, the random jittering samples different positions within each pixel, averaging to produce smooth edges.
+
+**Performance Impact:**
+
+Antialiasing has negligible performance impact (<1%), as it only involves two additional random number generations and simple floating-point operations per ray. These operations occur during the ray generation stage and are insignificant compared to subsequent BVH traversal and shading computations.

@@ -105,14 +105,21 @@ This list is not comprehensive. If you have a particular idea you would like to 
 #### Mesh Improvements
 
 * Arbitrary mesh loading and rendering (e.g. glTF 2.0 (preferred) or `obj` files) with toggleable bounding volume intersection culling
+  
   * :four: glTF
+  
   * :two: OBJ
+  
   * For other formats, please check on the class forum
+  
   * You can find models online or export them from your favorite 3D modeling application. With approval, you may use a third-party loading code to bring the data into C++.
+    
     * [tinygltf](https://github.com/syoyo/tinygltf/) is highly recommended for glTF.
     * [tinyObj](https://github.com/syoyo/tinyobjloader) is highly recommended for OBJ.
     * [obj2gltf](https://github.com/CesiumGS/obj2gltf) can be used to convert OBJ to glTF files. You can find similar projects for FBX and other formats.
+  
   * You can use the triangle intersection function `glm::intersectRayTriangle`.
+  
   * Bounding volume intersection culling: reduce the number of rays that have to be checked against the entire mesh by first checking rays against a volume that completely bounds the mesh. For full credit, provide performance analysis with and without this optimization.
     
     > Note: This goes great with the Hierarcical Spatial Data Structures.
