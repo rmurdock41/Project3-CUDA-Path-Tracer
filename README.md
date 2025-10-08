@@ -9,14 +9,7 @@ CUDA Path Tracer
   
   - Tested on: Windows 10, 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz 2.30 GHz, NVIDIA GeForce RTX 3060 Laptop GPU (Personal Computer)
 
-#### CUDA Path Tracer
 
-**University of Pennsylvania, CIS 5650: GPU Programming and Architecture, Project 3**
-
-- [Your Name]
-  - [LinkedIn](your-linkedin-link)
-  - [Personal Website](your-website)
-- Tested on: Windows 10, i7-XXXXX @ X.XXGHz 16GB, RTX XXXX 8GB
 
 **A CUDA-based path tracer implementing glTF model loading, refractive materials, depth of field, and BVH acceleration. Optimized using Russian Roulette path termination and various GPU performance techniques.**
 
