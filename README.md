@@ -189,7 +189,7 @@ Implemented probability-based termination strategy using path throughput. The sy
 | RR (minDepth=1) | 37 fps | +XX%     |
 | RR (minDepth=3) | 36 fps | +XX%     |
 
-![rrChart.png](img\rrChart.png)
+![rrChart.png](img/rrChart.png)
 
 **Analysis:** 
 
@@ -215,7 +215,7 @@ The material sorting system uses a three-stage pipeline for each bounce. First, 
 | Cornell Box + Bunny  | 3 (diffuse, bunny, emissive)    | 43 fps          | 32 fps       | -25%               |
 | Simple Open Scene    | 20+ materials                   | 51 fps          | 42 fps       | -18%               |
 
-![materialSort.png](img\materialSort.png)
+![materialSort.png](img/materialSort.png)
 
 **Analysis:**
 
