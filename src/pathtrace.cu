@@ -1187,6 +1187,8 @@ __global__ void shadeMaterial(
             glm::vec3 tdir = sampleAroundDir(idealT);
             pathSegment.ray.origin = p - N * EPS;
             pathSegment.ray.direction = tdir;
+            pathSegment.color *= glm::clamp(material.color, glm::vec3(0.0f), glm::vec3(1.0f));
+
 
         }
 

@@ -1,92 +1,382 @@
 {
   "Materials": {
-    "light": {
+    "light_warm": {
       "TYPE": "Emitting",
-      "RGB": [ 1.0, 1.0, 1.0 ],
-      "EMITTANCE": 5.0
+      "RGB": [ 1.0, 0.93, 0.82 ],
+      "EMITTANCE": 14.0
     },
+    "light_cool": {
+      "TYPE": "Emitting",
+      "RGB": [ 0.82, 0.90, 1.0 ],
+      "EMITTANCE": 10.0
+    },
+
     "diffuse_white": {
       "TYPE": "Diffuse",
-      "RGB": [ 0.98, 0.98, 0.98 ]
+      "RGB": [ 0.95, 0.95, 0.95 ]
     },
-    "diffuse_gray": {
+    "diffuse_concrete": {
       "TYPE": "Diffuse",
-      "RGB": [ 0.3, 0.3, 0.3 ]
+      "RGB": [ 0.45, 0.45, 0.47 ]
     },
-    "diffuse_red": {
+    "diffuse_dark": {
       "TYPE": "Diffuse",
-      "RGB": [ 0.85, 0.35, 0.35 ]
+      "RGB": [ 0.20, 0.20, 0.22 ]
     },
-    "diffuse_green": {
-      "TYPE": "Diffuse",
-      "RGB": [ 0.35, 0.85, 0.35 ]
-    },
-    "specular_white": {
+
+    "specular_mirror": {
       "TYPE": "Specular",
       "RGB": [ 0.98, 0.98, 0.98 ],
       "ROUGHNESS": 0.0
+    },
+    "specular_rough": {
+      "TYPE": "Specular",
+      "RGB": [ 0.90, 0.90, 0.90 ],
+      "ROUGHNESS": 0.18
+    },
+
+    "diffuse_gallery_wall": {
+      "TYPE": "Diffuse",
+      "RGB": [ 0.88, 0.88, 0.86 ]
+    },
+    "diffuse_lady_gray": {
+      "TYPE": "Diffuse",
+      "RGB": [ 0.60, 0.60, 0.60 ]
     }
   },
   "Camera": {
-    "RES": [ 800, 800 ],
-    "FOVY": 45.0,
+    "RES": [ 1280, 720 ],
+    "FOVY": 38.0,
     "ITERATIONS": 5000,
-    "DEPTH": 8,
-    "FILE": "cornell",
-    "EYE": [ 0.0, 5.0, 10.5 ],
-    "LOOKAT": [ 0.0, 5.0, 0.0 ],
+    "DEPTH": 10,
+    "FILE": "LM",
+    "EYE": [ 0.0, 3.2, 12.5 ],
+    "LOOKAT": [ 0.0, 2.2, 0.0 ],
     "UP": [ 0.0, 1.0, 0.0 ]
   },
   "Objects": [
     {
       "TYPE": "cube",
-      "MATERIAL": "light",
-      "TRANS": [ 0.0, 10.0, 0.0 ],
-      "ROTAT": [ 0.0, 0.0, 0.0 ],
-      "SCALE": [ 3.0, 0.3, 3.0 ]
-    },
-    {
-      "TYPE": "cube",
-      "MATERIAL": "diffuse_white",
+      "MATERIAL": "diffuse_concrete",
       "TRANS": [ 0.0, 0.0, 0.0 ],
       "ROTAT": [ 0.0, 0.0, 0.0 ],
-      "SCALE": [ 10.0, 0.01, 10.0 ]
+      "SCALE": [ 7.5, 0.12, 28.0 ]
     },
     {
       "TYPE": "cube",
       "MATERIAL": "diffuse_white",
-      "TRANS": [ 0.0, 10.0, 0.0 ],
-      "ROTAT": [ 0.0, 0.0, 90.0 ],
-      "SCALE": [ 0.01, 10.0, 10.0 ]
+      "TRANS": [ 0.0, 6.2, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 7.5, 0.10, 28.0 ]
     },
+
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_gallery_wall",
+      "TRANS": [ -3.6, 3.1, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.10, 6.2, 28.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_gallery_wall",
+      "TRANS": [ 3.6, 3.1, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.10, 6.2, 28.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_gallery_wall",
+      "TRANS": [ 0.0, 3.1, -14.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 7.5, 6.2, 0.10 ]
+    },
+
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_warm",
+      "TRANS": [ -1.2, 6.15, 8.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_cool",
+      "TRANS": [ 1.2, 6.15, 8.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_cool",
+      "TRANS": [ -1.2, 6.15, 3.5 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_warm",
+      "TRANS": [ 1.2, 6.15, 3.5 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_warm",
+      "TRANS": [ -1.2, 6.15, -1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_cool",
+      "TRANS": [ 1.2, 6.15, -1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_cool",
+      "TRANS": [ -1.2, 6.15, -5.5 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_warm",
+      "TRANS": [ 1.2, 6.15, -5.5 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_warm",
+      "TRANS": [ -1.2, 6.15, -10.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light_cool",
+      "TRANS": [ 1.2, 6.15, -10.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.45, 0.02, 2.5 ]
+    },
+
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, 9.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, 9.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, 5.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, 5.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, 1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, 1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, -3.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, -3.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, -7.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, -7.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ -2.6, 0.6, -11.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "diffuse_dark",
+      "TRANS": [ 2.6, 0.6, -11.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.5, 1.2, 0.5 ]
+    },
+
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ -2.6, 2.2, 9.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.40, 0.40, 0.40 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ 2.6, 2.2, 9.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.40, 0.40, 0.40 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "diffuse_white",
+      "TRANS": [ -2.6, 2.2, 5.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.38, 0.38, 0.38 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ 2.6, 2.2, 5.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.38, 0.38, 0.38 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ -2.6, 2.2, 1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.36, 0.36, 0.36 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "diffuse_white",
+      "TRANS": [ 2.6, 2.2, 1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.36, 0.36, 0.36 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ -2.6, 2.2, -3.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.35, 0.35, 0.35 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ 2.6, 2.2, -3.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.35, 0.35, 0.35 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "diffuse_white",
+      "TRANS": [ -2.6, 2.2, -7.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.34, 0.34, 0.34 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ 2.6, 2.2, -7.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.34, 0.34, 0.34 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ -2.6, 2.2, -11.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.33, 0.33, 0.33 ]
+    },
+    {
+      "TYPE": "sphere",
+      "MATERIAL": "diffuse_white",
+      "TRANS": [ 2.6, 2.2, -11.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.33, 0.33, 0.33 ]
+    },
+
+    {
+      "TYPE": "cube",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ -3.55, 2.2, 4.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 2.0, 2.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ 3.55, 2.2, 1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 2.0, 2.2 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "specular_mirror",
+      "TRANS": [ -3.55, 2.2, -2.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 2.0, 2.4 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "specular_rough",
+      "TRANS": [ 3.55, 2.2, -5.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 2.0, 2.6 ]
+    },
+
     {
       "TYPE": "cube",
       "MATERIAL": "diffuse_white",
-      "TRANS": [ 0.0, 5.0, -5.0 ],
-      "ROTAT": [ 0.0, 90.0, 0.0 ],
-      "SCALE": [ 0.01, 10.0, 10.0 ]
-    },
-    {
-      "TYPE": "cube",
-      "MATERIAL": "diffuse_red",
-      "TRANS": [ -5.0, 5.0, 0.0 ],
+      "TRANS": [ 0.0, 0.75, 0.0 ],
       "ROTAT": [ 0.0, 0.0, 0.0 ],
-      "SCALE": [ 0.01, 10.0, 10.0 ]
+      "SCALE": [ 1.6, 1.5, 1.6 ]
     },
-    {
-      "TYPE": "cube",
-      "MATERIAL": "diffuse_green",
-      "TRANS": [ 5.0, 5.0, 0.0 ],
-      "ROTAT": [ 0.0, 0.0, 0.0 ],
-      "SCALE": [ 0.01, 10.0, 10.0 ]
-    },
+
     {
       "TYPE": "mesh",
-      "MATERIAL": "diffuse_gray",
+      "MATERIAL": "diffuse_lady_gray",
       "FILE": "scenes/gltf/LadyMaria.gltf",
-      "TRANS": [ 0.0, -1.9, -1.0 ],
-      "ROTAT": [ -90, 0.0, 0.0 ],
-      "SCALE": [ 0.04, 0.04, 0.04 ]
+      "TRANS": [ 0.0, -0.9, 7.0 ],
+      "ROTAT": [ -90.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 0.02, 0.02 ]
     }
   ]
 }
