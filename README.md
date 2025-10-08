@@ -315,3 +315,9 @@ This project uses the following third-party libraries and assets:
 This project builds upon the CIS 565 CUDA Path Tracer base code provided by the University of Pennsylvania, including OpenGL/CUDA interop framework, scene loading infrastructure, and basic ray-triangle intersection functions.
 
 All other implementations (BVH construction, material shading, Russian Roulette, stream compaction, etc.) are original work completed for this project.
+
+---
+
+## CMakeLists.txt Modifications
+
+The CMakeLists.txt was modified to support glTF model loading and enable stream compaction functionality. Key changes include: added `find_package(CUDAToolkit REQUIRED)` to explicitly locate the CUDA toolkit; created a `tinygltf_impl` static library for glTF parsing; uncommented `add_subdirectory(stream_compaction)` to enable Project 2's stream compaction implementation; added `mesh_loader.h` and `mesh_loader.cpp` files to the executable; included the TinyGLTF directory in the main program's include paths; linked both `stream_compaction` and `tinygltf_impl` libraries; and added CUDA include directories for Windows platforms to ensure header file accessibility. These modifications enable the project to load and render complex mesh models in glTF format while utilizing efficient stream compaction optimization.
