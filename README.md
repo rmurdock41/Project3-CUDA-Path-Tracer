@@ -32,9 +32,9 @@ CUDA Path Tracer
 
 Implemented **refraction effects** based on Snell's law with Fresnel calculations using Schlick's approximation. Supports transparent materials like glass and water with light bending and internal reflections. Implemented rough refractive surfaces that can simulate effects like frosted glass.
 
-| Clear Glass (IOR 1.5, roughness=0)                                | Colored Glass                          | Rough Glass (frosted effect)   |
-| ----------------------------------------------------------------- | -------------------------------------- | ------------------------------ |
-| <img src="img/ior1p5.png" title="" alt="Clear Glass" width="595"> | ![Colored Glass](img/coloredGlass.png) | ![Rough Glass](img/fGlass.png) |
+| Clear Glass (IOR 1.5, roughness=0) | Colored Glass | Rough Glass (frosted effect) |
+| --- | --- | --- |
+| <img src="img/ior1p5.png" alt="Clear Glass" width="595"> | <img src="img/coloredGlass.png" alt="Colored Glass" width="595"> | <img src="img/fGlass.png" alt="Rough Glass" width="595"> |
 
 **Implementation Details:**
 
