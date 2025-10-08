@@ -34,7 +34,7 @@ Implemented **refraction effects** based on Snell's law with Fresnel calculation
 
 | Clear Glass (IOR 1.5, roughness=0) | Colored Glass | Rough Glass (frosted effect) |
 | --- | --- | --- |
-| <img src="img/ior1p5.png" alt="Clear Glass" width="595"> | <img src="img/coloredGlass.png" alt="Colored Glass" width="595"> | <img src="img/fGlass.png" alt="Rough Glass" width="595"> |
+| ![Clear Glass](img/ior1p5.png) | ![Colored Glass](img/coloredGlass.png) | ![Rough Glass](img/fGlass.png) |
 
 **Implementation Details:**
 
