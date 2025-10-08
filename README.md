@@ -247,7 +247,7 @@ Stream compaction uses a three-kernel pipeline to remove dead rays. `kernFlagAli
 | Cornell Box + Bunny  | 30 fps             | 32 fps          | +7%     |
 | Simple Open Scene    | 13 fps             | 48 fps          | +269%   |
 
-![streamCompact.png](img\streamCompact.png)\
+![streamCompact.png](img/streamCompact.png)
 
 **Analysis:**
 
