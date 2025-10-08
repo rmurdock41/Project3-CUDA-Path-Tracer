@@ -41,7 +41,7 @@ bool GetBVHEnabled() { return gEnableBVH; }
 #define ENABLE_RR 1
 
 static bool gEnableRR = false;  
-static int  gRRMinDepth = 1;     
+static int  gRRMinDepth = 3;     
 
 void SetRREnabled(bool v) { gEnableRR = v; }
 bool GetRREnabled() { return gEnableRR; }
@@ -1456,6 +1456,12 @@ void pathtrace(uchar4* pbo, int frame, int iter)
                 cudaMemcpy(&lastFlag, dev_aliveFlags + (num_paths - 1), sizeof(int), cudaMemcpyDeviceToHost);
                 cudaMemcpy(&lastIndex, dev_scanIndices + (num_paths - 1), sizeof(int), cudaMemcpyDeviceToHost);
                 int newCount = lastIndex + lastFlag;
+
+                if (iter == 1) {
+                    printf("Bounce %d: %d -> %d rays (%.1f%% alive)\n",
+                        depth, num_paths, newCount,
+                        100.0f * newCount / pixelcount);
+                }
 
                 if (newCount > 0) {
                     kernScatterPaths << <blocks, block >> > (

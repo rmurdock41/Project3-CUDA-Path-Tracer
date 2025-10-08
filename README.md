@@ -32,13 +32,9 @@ CUDA Path Tracer
 
 Implemented **refraction effects** based on Snell's law with Fresnel calculations using Schlick's approximation. Supports transparent materials like glass and water with light bending and internal reflections. Implemented rough refractive surfaces that can simulate effects like frosted glass.
 
-| Clear Glass (IOR 1.5, roughness=0)  | Colored Glass                           | Rough Glass (frosted effect)        |
-| ----------------------------------- | --------------------------------------- | ----------------------------------- |
-| ![Clear Glass](img/glass_clear.png) | ![Colored Glass](img/glass_colored.png) | ![Rough Glass](img/glass_rough.png) |
-
-| Multiple Refractive Objects                 | Roughness Comparison                                    |
-| ------------------------------------------- | ------------------------------------------------------- |
-| ![Multiple Objects](img/glass_multiple.png) | ![Roughness Levels](img/glass_roughness_comparison.png) |
+| Clear Glass (IOR 1.5, roughness=0)                                | Colored Glass                          | Rough Glass (frosted effect)   |
+| ----------------------------------------------------------------- | -------------------------------------- | ------------------------------ |
+| <img src="img/ior1p5.png" title="" alt="Clear Glass" width="595"> | ![Colored Glass](img/coloredGlass.png) | ![Rough Glass](img/fGlass.png) |
 
 **Implementation Details:**
 
@@ -54,11 +50,7 @@ Refractive materials cause light to undergo multiple reflections and refractions
 
 Implemented perfect specular reflection materials with roughness parameter support, simulating effects from perfect mirrors to rough metallic surfaces.
 
-
-
-![Specular Reflection](img/specular.png)
-
-*Demonstrating specular reflection effects with varying roughness values*
+<img src="img/specular.png" title="" alt="Specular Reflection" width="272">
 
 **Implementation Details:**
 
@@ -68,9 +60,9 @@ Used `glm::reflect` to calculate ideal reflection direction, with material.rough
 
 Implemented physically-based thin lens camera model to simulate realistic depth of field effects by sampling on the aperture.
 
-| No DOF                          | with DOF                       |
-| ------------------------------- | ------------------------------ |
-| ![No DOF](img/without%20RR.png) | ![Large Aperture](img/DOF.png) |
+| No DOF                       | with DOF                       |
+| ---------------------------- | ------------------------------ |
+| ![No DOF](img/withoutRR.png) | ![Large Aperture](img/DOF.png) |
 
 **Implementation Details:**
 
@@ -84,15 +76,27 @@ Depth of field only affects the ray generation stage without impacting subsequen
 
 Data shows that both open and closed scenes experience consistent overhead. This makes depth of field a cost-effective choice for enhancing rendering realism, significantly improving visual quality with negligible impact on frame rate.
 
+### Antialiasing
+
+Implemented stochastic sampled antialiasing by randomly jittering ray positions within each pixel to reduce aliasing artifacts.
+
+**Implementation Details:**
+
+In the `generateRayFromCamera` kernel, each ray receives a random offset within its pixel. Random numbers `jx` and `jy` in the range [0, 1) are generated using `thrust::uniform_real_distribution` and applied to the sub-pixel coordinate calculation. The random number generator is seeded using `makeSeededRandomEngine` based on iteration number and pixel index, ensuring different jitter patterns across iterations. Over multiple iterations, the random jittering samples different positions within each pixel, averaging to produce smooth edges.
+
+**Performance Impact:**
+
+Antialiasing has negligible performance impact (<1%), as it only involves two additional random number generations and simple floating-point operations per ray. These operations occur during the ray generation stage and are insignificant compared to subsequent BVH traversal and shading computations.
+
 ---
 
 ## glTF Model Loading
 
 Implemented complete glTF 2.0 model loading and rendering using TinyGLTF library, supporting import and rendering of arbitrary triangle meshes.
 
-| Stanford Bunny (69,451 tris)   | Lady Maria (1,013,600 tris)   |
-| ------------------------------ | ----------------------------- |
-| ![Bunny](img/without%20RR.png) | ![Lady Maria](img/glTFLM.png) |
+| Stanford Bunny (69,451 tris) | Lady Maria (1,013,600 tris)   |
+| ---------------------------- | ----------------------------- |
+| ![Bunny](img/withoutRR.png)  | ![Lady Maria](img/glTFLM.png) |
 
 **Implementation Details:**
 
@@ -110,9 +114,13 @@ glTF model loading itself has no direct impact on runtime performance as model p
 
 Implemented hierarchical spatial acceleration structure using axis-aligned bounding boxes (AABB), dramatically reducing ray-triangle intersection tests. Uses Surface Area Heuristic (SAH) for CPU-side BVH construction and iterative stack-based traversal on GPU.
 
-| ![BVH Visualization](img/bvh_structure.png) | ![Performance Chart](img/bvh_performance.png) |
-| ------------------------------------------- | --------------------------------------------- |
-| **glTF FPS with BVH*                        | *glTF FPS without BVH*                        |
+| With BVH                           | Without BVH                              |
+| ---------------------------------- | ---------------------------------------- |
+| ![Bunny with BVH](img/withBVH.png) | ![Bunny without BVH](img/withoutBVH.png) |
+
+| *With Tris BVH*                          | Without Tris BVH                            |
+| ---------------------------------------- | ------------------------------------------- |
+| ![BVH Visualization](img/withTriBVH.png) | ![Performance Chart](img/withoutTriBVH.png) |
 
 **Implementation Details:**
 
@@ -122,20 +130,22 @@ Constructed BVH tree recursively on CPU using Surface Area Heuristic for optimal
 
 | Scene          | Triangle Count | Scene Type | Without BVH | With BVH | Speedup |
 | -------------- | -------------- | ---------- | ----------- | -------- | ------- |
-| MultiBall      | -              | Open       |             |          |         |
-| MultiBall      | -              | Closed     |             |          |         |
-| Cube           | 12             | Open       | XX fps      | XX fps   | ~1.0x   |
-| Cube           | 12             | Closed     | XX fps      | XX fps   | ~1.0x   |
-| Stanford Bunny | 69,451         | Open       | XX fps      | XX fps   | ~XXx    |
-| Stanford Bunny | 69,451         | Closed     | XX fps      | XX fps   | ~XXx    |
-| Lady Maria     | 1,013,600      | Open       | <1 fps      | XX fps   | ~XXx    |
-| Lady Maria     | 1,013,600      | Closed     | <1 fps      | XX fps   | ~XXx    |
+| MultiBall      | -              | Open       | 40 fps      | 55 fps   | 38%     |
+| MultiBall      | -              | Closed     | 10 fps      | 19 fps   | 90%     |
+| Cube           | 12             | Open       | 60 fps      | 60 fps   | -       |
+| Cube           | 12             | Closed     | 44 fps      | 44 fps   | -       |
+| Stanford Bunny | 69,451         | Open       | 0.4 fps     | 32 fps   | 80x     |
+| Stanford Bunny | 69,451         | Closed     | 1.7 fps     | 97 fps   | 57x     |
+| Lady Maria     | 1,013,600      | Open       | <0.1 fps    | 15 fps   | -       |
+| Lady Maria     | 1,013,600      | Closed     | <0.1 fps    | 37 fps   | -       |
+
+![](img/BVHchart.png)
 
 **BVH Statistics:**
 
 | Scene          | Triangle Count | Mesh BVH Nodes | Scene BVH Nodes |
 | -------------- | -------------- | -------------- | --------------- |
-| Multiball      | -              | -              |                 |
+| Multiball      | -              | -              | 43              |
 | Stanford Bunny | 69,451         | 40,597         | 3               |
 | Lady Maria     | 1,013,600      | 524,287        | 3               |
 
@@ -149,17 +159,13 @@ For Stanford Bunny with 70,000 triangles, BVH reduces average triangles tested p
 
 Comparing open and closed scenes shows that BVH acceleration effectiveness is largely independent of scene type, as BVH primarily optimizes the intersection testing stage rather than ray bouncing behavior. Closed scenes have lower baseline FPS due to more ray bounces, but BVH speedup ratios remain similar across both scene types. Two-level BVH structure enables efficient handling of scenes with multiple complex models: scene-level BVH quickly locates potentially intersected objects, mesh-level BVH rapidly finds intersected triangles within objects. Iterative traversal on GPU avoids recursion overhead and stack overflow issues, with fixed 64-level stack satisfying most scene requirements. AABB intersection testing uses slab method, computationally simple and efficient, suitable for GPU's SIMD architecture.
 
-
-
 ### Russian Roulette Path Termination
 
 Probabilistically terminates paths based on their energy contribution, reducing computation while maintaining unbiased results.
 
-| RR minDepth=1                                          | RR minDepth=3                                          | No RR                                                            |
-| ------------------------------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------------- |
-| <img title="" src="img/RR1.png" alt="RR1" width="643"> | <img title="" src="img/RR3.png" alt="RR3" width="622"> | <img title="" src="img/without%20RR.png" alt="NoRR" width="786"> |
-
-*All images at 5000 samples*
+| RR minDepth=1                                          | RR minDepth=3                                          | No RR                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------- |
+| <img title="" src="img/RR1.png" alt="RR1" width="643"> | <img title="" src="img/RR3.png" alt="RR3" width="622"> | <img title="" src="img/withoutRR.png" alt="NoRR" width="786"> |
 
 **Implementation Details:**
 
@@ -171,23 +177,27 @@ Implemented probability-based termination strategy using path throughput. The sy
 
 | Configuration   | FPS    | vs No RR |
 | --------------- | ------ | -------- |
-| No RR           | XX fps | -        |
-| RR (minDepth=1) | XX fps | +XX%     |
-| RR (minDepth=3) | XX fps | +XX%     |
+| No RR           | 92 fps | -        |
+| RR (minDepth=1) | 92 fps | +XX%     |
+| RR (minDepth=3) | 91 fps | +XX%     |
 
 **Closed Scene :**
 
 | Configuration   | FPS    | vs No RR |
 | --------------- | ------ | -------- |
-| No RR           | XX fps | -        |
-| RR (minDepth=1) | XX fps | +XX%     |
-| RR (minDepth=3) | XX fps | +XX%     |
+| No RR           | 32 fps | -        |
+| RR (minDepth=1) | 37 fps | +XX%     |
+| RR (minDepth=3) | 36 fps | +XX%     |
 
-**Analysis:**
+![rrChart.png](img\rrChart.png)
 
-Russian Roulette improves performance by early terminating low-contribution paths while maintaining unbiasedness through energy compensation. In open scenes, many rays naturally exit scene boundaries and terminate, making RR's effect relatively limited but still providing performance improvements. 
+**Analysis:** 
 
-In closed scenes, rays are trapped inside and continue bouncing, making RR's effect more pronounced with significantly higher performance gains. The choice of minDepth parameter affects performance benefits: minDepth=1 allows termination after the first bounce, potentially achieving higher performance gains; minDepth=3 guarantees the first 3 bounces are not terminated, ensuring basic multi-bounce lighting is correctly captured, representing a balanced choice between performance and quality. Rendered results show that images with different minDepth settings and with/without RR are visually indistinguishable, validating RR's unbiasedness. Through extensive sampling, random termination introduced by RR produces no noticeable bias or noise, with virtually identical image quality. This makes RR a performance optimization technique with virtually no quality loss.
+Russian Roulette shows scene-dependent performance characteristics. In open scenes, the optimization provides negligible benefit (0% to -1%), while in closed scenes it achieves meaningful improvements (+13-16%). Open scenes show minimal or slightly negative impact from Russian Roulette. With a baseline of 92 fps, rays already escape scene boundaries quickly, naturally terminating within a few bounces. The overhead of Russian Roulette calculations (survival probability computation, random number generation, energy compensation) outweighs any computational savings from early termination. Most rays that would be terminated by RR have already exited the scene through natural means. Closed scenes demonstrate clear benefits from Russian Roulette, with 13-16% performance improvement. Rays remain trapped within the enclosed environment and continue bouncing until reaching maximum depth or absorption. Russian Roulette provides an additional termination mechanism based on energy contribution, allowing low-contribution paths to exit early rather than consuming resources for negligible visual impact. The minDepth=1 configuration achieves slightly higher gains (+16%) by allowing earlier termination, while minDepth=3 (+13%) ensures more complete light transport at the cost of marginally lower performance. The performance difference between minDepth=1 and minDepth=3 is minimal in both scene types (1-3% variation), indicating that the first few bounces contribute significantly to the final image and are rarely terminated even with aggressive RR settings. Visual quality remains indistinguishable across all configurations at 5000 samples, validating Russian Roulette's unbiased nature through energy compensation. 
+
+**Conclusion:**
+
+ Russian Roulette is most effective in closed scenes where rays have long path lengths. For open scenes with naturally short paths, the optimization overhead may exceed benefits. The technique maintains image quality through proper energy compensation while providing meaningful performance gains in appropriate scenarios.
 
 ### Material Sorting
 
@@ -204,6 +214,8 @@ The material sorting system uses a three-stage pipeline for each bounce. First, 
 | Cornell Box (Closed) | 3 (diffuse, specular, emissive) | 44 fps          | 29 fps       | -34%               |
 | Cornell Box + Bunny  | 3 (diffuse, bunny, emissive)    | 43 fps          | 32 fps       | -25%               |
 | Simple Open Scene    | 20+ materials                   | 51 fps          | 42 fps       | -18%               |
+
+![materialSort.png](img\materialSort.png)
 
 **Analysis:**
 
@@ -235,6 +247,8 @@ Stream compaction uses a three-kernel pipeline to remove dead rays. `kernFlagAli
 | Cornell Box + Bunny  | 30 fps             | 32 fps          | +7%     |
 | Simple Open Scene    | 13 fps             | 48 fps          | +269%   |
 
+![streamCompact.png](img\streamCompact.png)\
+
 **Analysis:**
 
 Stream compaction's performance improvement varies significantly across scenes, ranging from 7% to 269%, reflecting fundamental differences in scene geometry and ray termination patterns.
@@ -249,14 +263,55 @@ The Bunny scene shows minimal improvement (+7%). The Stanford Bunny contains 69,
 
 Stream compaction provides positive gains across all test scenes but is highly dependent on scene characteristics. Open scenes achieve extreme benefits from rapid ray escape, closed simple scenes gain steady improvements, and geometrically complex scenes show limited gains due to other bottlenecks. This optimization is enabled by default across all scenes.
 
-### Antialiasing
+#### Ray Survival Analysis
 
-Implemented stochastic sampled antialiasing by randomly jittering ray positions within each pixel to reduce aliasing artifacts.
+To evaluate stream compaction's effectiveness, we measured the number of active rays after each bounce in a single iteration.
 
-**Implementation Details:**
+| Bounce | Open Scene Active Rays | Open Scene % Alive | Closed Scene Active Rays | Closed Scene % Alive |
+| ------ | ---------------------- | ------------------ | ------------------------ | -------------------- |
+| 1      | 344,766                | 53.9%              | 522,846                  | 81.7%                |
+| 2      | 163,001                | 25.5%              | 363,060                  | 56.7%                |
+| 3      | 94,276                 | 14.7%              | 285,269                  | 44.6%                |
+| 4      | 52,515                 | 8.2%               | 232,608                  | 36.3%                |
+| 5      | 23,149                 | 3.6%               | 190,829                  | 29.8%                |
+| 6      | 11,514                 | 1.8%               | 156,449                  | 24.4%                |
+| 7      | 6,577                  | 1.0%               | 129,115                  | 20.2%                |
+| 8      | 0                      | 0.0%               | 0                        | 0.0%                 |
 
-In the `generateRayFromCamera` kernel, each ray receives a random offset within its pixel. Random numbers `jx` and `jy` in the range [0, 1) are generated using `thrust::uniform_real_distribution` and applied to the sub-pixel coordinate calculation. The random number generator is seeded using `makeSeededRandomEngine` based on iteration number and pixel index, ensuring different jitter patterns across iterations. Over multiple iterations, the random jittering samples different positions within each pixel, averaging to produce smooth edges.
+<img title="" src="img/b1.png" alt="Ray Survival Comparison" width="604">
 
-**Performance Impact:**
+<img title="" src="img/b2.png" alt="Ray Survival Comparison" width="680">
 
-Antialiasing has negligible performance impact (<1%), as it only involves two additional random number generations and simple floating-point operations per ray. These operations occur during the ray generation stage and are insignificant compared to subsequent BVH traversal and shading computations.
+**Analysis:**
+
+In open scenes, rays rapidly escape scene boundaries. Nearly half of all rays terminate after the first bounce, with over 90% eliminated by bounce 4. Stream compaction dramatically reduces the number of rays processed in subsequent kernels from early bounces onward.
+
+In closed scenes, rays remain trapped within the enclosure and continue bouncing. Over 80% of rays remain active after the first bounce, with one-third still alive at bounce 4. Rays repeatedly interact with surfaces in the confined space, causing stream compaction benefits to accumulate gradually.
+
+This difference in ray termination patterns directly explains the performance data. Open scenes achieve massive acceleration (+269%) through aggressive early compaction, while closed scenes gain moderate improvement (+18%) due to slower ray termination.
+
+Stream compaction eliminates a critical GPU inefficiency: terminated rays still occupy memory and trigger kernel execution. At bounce 4 in the open scene, processing 640,000 rays when only 8% are actually active represents massive computational waste. Stream compaction removes these dead rays, focusing GPU resources on meaningful computation.
+
+---
+
+## Third-Party Code and Assets
+
+This project uses the following third-party libraries and assets:
+
+### Libraries
+
+- **[TinyGLTF](https://github.com/syoyo/tinygltf)** - glTF 2.0 model loading library for parsing and loading glTF mesh files
+
+- **[GLM](https://github.com/g-truc/glm)** - OpenGL Mathematics library for vector and matrix operations
+
+### 3D Models
+
+- **[Bloodborne - Lady Maria of the Astral Clocktower](https://sketchfab.com/3d-models/bloodborne-lady-maria-of-the-astral-clocktower-ad406857d8c64115aba721ee98b666bb)** by [Redeemer](https://sketchfab.com/redeemer_3d) - Used for high-polygon mesh rendering demonstration and BVH performance testing
+
+- **[Stanford Bunny](http://graphics.stanford.edu/data/3Dscanrep/)** - Stanford Computer Graphics Laboratory, used for BVH performance testing
+
+### Base Code
+
+This project builds upon the CIS 565 CUDA Path Tracer base code provided by the University of Pennsylvania, including OpenGL/CUDA interop framework, scene loading infrastructure, and basic ray-triangle intersection functions.
+
+All other implementations (BVH construction, material shading, Russian Roulette, stream compaction, etc.) are original work completed for this project.
