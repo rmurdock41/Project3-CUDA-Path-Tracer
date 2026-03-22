@@ -746,6 +746,13 @@ static void UploadTrisToGPU() {
 static void BakeMeshesIntoSceneAndCPUTris(Scene* scene) {
     h_allTris.clear();
 
+
+    scene->geoms.erase(
+        std::remove_if(scene->geoms.begin(), scene->geoms.end(),
+            [](const Geom& g) { return g.type == MESH; }),
+        scene->geoms.end()
+    );
+
     for (const auto& mi : scene->meshInstances) {
         std::vector<TriCPU> local;
         std::string err;
