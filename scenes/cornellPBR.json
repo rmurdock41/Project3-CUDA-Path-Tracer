@@ -1,0 +1,108 @@
+{
+  "Materials": {
+    "light": {
+      "TYPE": "Emitting",
+      "RGB": [ 1.0, 1.0, 1.0 ],
+      "EMITTANCE": 5.0
+    },
+    "pbr_white": {
+      "TYPE": "PBR",
+      "RGB": [ 0.98, 0.98, 0.98 ],
+      "ROUGHNESS": 1.0,
+      "METALLIC": 0.0
+    },
+    "pbr_red": {
+      "TYPE": "PBR",
+      "RGB": [ 0.85, 0.35, 0.35 ],
+      "ROUGHNESS": 0.1,
+      "METALLIC": 0.9
+    },
+    "pbr_green": {
+      "TYPE": "PBR",
+      "RGB": [ 0.35, 0.85, 0.35 ],
+      "ROUGHNESS": 1.0,
+      "METALLIC": 0.0
+    },
+    "glass": {
+      "TYPE": "Refractive",
+      "RGB": [ 1.0, 1.0, 1.0 ],
+      "IOR": 1.5,
+      "ROUGHNESS": 0.0,
+      "REFLECTIVE": 1.0
+    },
+    "specular_white": {
+      "TYPE": "Specular",
+      "RGB": [ 0.98, 0.98, 0.98 ],
+      "ROUGHNESS": 0.3,
+      "REFLECTIVE": 1.0
+    }
+  },
+  "Camera": {
+    "RES": [ 800, 800 ],
+    "FOVY": 45.0,
+    "ITERATIONS": 5000,
+    "DEPTH": 8,
+    "FILE": "cornell_pbr",
+    "EYE": [ 0.0, 5.0, 10.5 ],
+    "LOOKAT": [ 0.0, 5.0, 0.0 ],
+    "UP": [ 0.0, 1.0, 0.0 ]
+  },
+  "Objects": [
+    {
+      "TYPE": "cube",
+      "MATERIAL": "light",
+      "TRANS": [ 0.0, 10.0, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 3.0, 0.3, 3.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "pbr_white",
+      "TRANS": [ 0.0, 0.0, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 10.0, 0.01, 10.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "pbr_white",
+      "TRANS": [ 0.0, 10.0, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 90.0 ],
+      "SCALE": [ 0.01, 10.0, 10.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "pbr_white",
+      "TRANS": [ 0.0, 5.0, -5.0 ],
+      "ROTAT": [ 0.0, 90.0, 0.0 ],
+      "SCALE": [ 0.01, 10.0, 10.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "pbr_red",
+      "TRANS": [ -5.0, 5.0, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.01, 10.0, 10.0 ]
+    },
+    {
+      "TYPE": "cube",
+      "MATERIAL": "pbr_green",
+      "TRANS": [ 5.0, 5.0, 0.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 0.01, 10.0, 10.0 ]
+    },
+    {
+      "TYPE": "SPHERE",
+      "MATERIAL": "glass",
+      "TRANS": [ -1.0, 3.0, -1.0 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 3.0, 3.0, 3.0 ]
+    },
+    {
+      "TYPE": "SPHERE",
+      "MATERIAL": "specular_white",
+      "TRANS": [ 2.5, 2.0, 1.5 ],
+      "ROTAT": [ 0.0, 0.0, 0.0 ],
+      "SCALE": [ 2.5, 2.5, 2.5 ]
+    }
+  ]
+}

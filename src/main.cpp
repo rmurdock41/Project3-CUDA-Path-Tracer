@@ -408,6 +408,50 @@ void RenderImGui()
         cam.apertureRadius,
         (cam.focalDistance > 0.0f ? cam.focalDistance : 0.0f));
 
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Environment Map (HDRI)");
+
+    static char  envPath[512] = "";
+    static float uiEnvIntensity = 1.0f;
+    static float uiEnvRotation = 0.0f;
+
+
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.f);
+    ImGui::InputText("##envpath", envPath, sizeof(envPath));
+    ImGui::SameLine();
+    if (ImGui::Button("Load", ImVec2(50, 0))) {
+        if (strlen(envPath) > 0) {
+            SetEnvMap(envPath);
+            uiEnvIntensity = GetEnvIntensity();
+            iteration = 0;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear", ImVec2(50, 0))) {
+        ClearEnvMap();
+        iteration = 0;
+    }
+
+    if (HasEnvMap()) {
+        ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "ON");
+    }
+    else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.f), "OFF");
+    }
+
+    ImGui::BeginDisabled(!HasEnvMap());
+    if (ImGui::SliderFloat("Env Intensity", &uiEnvIntensity, 0.0f, 10.0f, "%.2f")) {
+        SetEnvIntensity(uiEnvIntensity);
+        iteration = 0;
+    }
+    if (ImGui::SliderFloat("Env Rotation", &uiEnvRotation, 0.0f, 360.0f, "%.1f deg")) {
+        SetEnvRotation(uiEnvRotation * PI / 180.f);
+        iteration = 0;
+    }
+    ImGui::EndDisabled();
+
+
     ImGui::End();
 
     ImGui::Render();
@@ -570,6 +614,8 @@ void runCuda()
     {
         pathtraceFree();
         pathtraceInit(scene);
+
+
     }
 
     if (iteration < renderState->iterations)

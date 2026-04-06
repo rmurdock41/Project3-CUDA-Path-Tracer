@@ -51,7 +51,10 @@ void Scene::loadFromJSON(const std::string& jsonName)
             const auto& col = p["RGB"];
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
             if (p.contains("ROUGHNESS")) {
-                newMaterial.roughness = (float)p["ROUGHNESS"]; 
+                newMaterial.roughness = (float)p["ROUGHNESS"];
+            }
+            if (p.contains("METALLIC")) {
+                newMaterial.metallic = (float)p["METALLIC"];
             }
         }
         else if (p["TYPE"] == "Emitting")
@@ -76,6 +79,9 @@ void Scene::loadFromJSON(const std::string& jsonName)
                 newMaterial.roughness = 0.0f;
             }
             newMaterial.emittance = 0.0f;
+            if (p.contains("METALLIC")) {
+                newMaterial.metallic = (float)p["METALLIC"];
+            }
         }
         else if (p["TYPE"] == "Refractive")
         {
@@ -100,6 +106,20 @@ void Scene::loadFromJSON(const std::string& jsonName)
             }
             if (p.contains("ROUGHNESS")) {
                 newMaterial.roughness = (float)p["ROUGHNESS"];
+            }
+        }
+
+        else if (p["TYPE"] == "PBR")
+        {
+            const auto& col = p["RGB"];
+            newMaterial.color = glm::vec3(col[0], col[1], col[2]);
+            newMaterial.hasReflective = 1.0f;
+            newMaterial.hasRefractive = 0.0f;
+            if (p.contains("ROUGHNESS")) {
+                newMaterial.roughness = (float)p["ROUGHNESS"];
+            }
+            if (p.contains("METALLIC")) {
+                newMaterial.metallic = (float)p["METALLIC"];
             }
         }
         MatNameToID[name] = materials.size();

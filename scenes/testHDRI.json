@@ -1,0 +1,28 @@
+{
+  "Materials": {
+    "diffuse_lady_gray": {
+      "TYPE": "Diffuse",
+      "RGB": [ 0.60, 0.60, 0.60 ]
+    }
+  },
+  "Camera": {
+    "RES": [ 1280, 720 ],
+    "FOVY": 38.0,
+    "ITERATIONS": 5000,
+    "DEPTH": 10,
+    "FILE": "LM",
+    "EYE": [ 0.0, 3.2, 12.5 ],
+    "LOOKAT": [ 0.0, 2.2, 0.0 ],
+    "UP": [ 0.0, 1.0, 0.0 ]
+  },
+  "Objects": [
+    {
+      "TYPE": "mesh",
+      "MATERIAL": "diffuse_lady_gray",
+      "FILE": "scenes/gltf/LadyMaria.gltf",
+      "TRANS": [ 0.0, -0.9, 7.0 ],
+      "ROTAT": [ -90.0, 0.0, 0.0 ],
+      "SCALE": [ 0.02, 0.02, 0.02 ]
+    }
+  ]
+}

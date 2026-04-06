@@ -16,9 +16,13 @@
 #include "interactions.h"
 #include "../stream_compaction/efficient.h"  
 
+
+
 #include <vector>
 #include <algorithm>
 #include "mesh_loader.h"
+
+#include "tinygltf/stb_image.h"
 
 #include <thrust/sort.h>
 #include <thrust/sequence.h>
@@ -53,6 +57,8 @@ int  GetRRMinDepth() { return gRRMinDepth; }
 // ===== GPU Tris =====
 struct Tri {
     glm::vec3 v0, v1, v2;
+    glm::vec2 uv0, uv1, uv2;
+    glm::vec4 tan0, tan1, tan2;
     int       materialId;
 };
 
@@ -207,12 +213,128 @@ __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm
 }
 
 static Scene* hst_scene = NULL;
+
 static GuiDataContainer* guiData = NULL;
 static glm::vec3* dev_image = NULL;
 static Geom* dev_geoms = NULL;
 static Material* dev_materials = NULL;
 static PathSegment* dev_paths = NULL;
 static ShadeableIntersection* dev_intersections = NULL;
+
+// ===== Environment Map =====
+static cudaTextureObject_t gEnvTexObj = 0;
+static cudaArray_t         gEnvCuArray = nullptr;
+static float               gEnvIntensity = 1.0f;
+static float               gEnvRotation = 0.0f;
+static bool                gHasEnvMap = false;
+
+float GetEnvIntensity() { return gEnvIntensity; }
+void  SetEnvIntensity(float v) { gEnvIntensity = v; }
+float GetEnvRotation() { return gEnvRotation; }
+void  SetEnvRotation(float r) { gEnvRotation = r; }
+bool  HasEnvMap() { return gHasEnvMap; }
+
+void ClearEnvMap() {
+    if (gEnvTexObj) { cudaDestroyTextureObject(gEnvTexObj);  gEnvTexObj = 0; }
+    if (gEnvCuArray) { cudaFreeArray(gEnvCuArray); gEnvCuArray = nullptr; }
+    gHasEnvMap = false;
+}
+
+static void uploadEnvMap(float* data, int w, int h) {
+    std::vector<float4> data4(w * h);
+    for (int i = 0; i < w * h; i++)
+        data4[i] = make_float4(data[i * 3], data[i * 3 + 1], data[i * 3 + 2], 0.f);
+
+    cudaChannelFormatDesc desc = cudaCreateChannelDesc<float4>();
+    cudaMallocArray(&gEnvCuArray, &desc, w, h);
+    cudaMemcpy2DToArray(
+        gEnvCuArray, 0, 0,
+        data4.data(), w * sizeof(float4),
+        w * sizeof(float4), h,
+        cudaMemcpyHostToDevice);
+
+    cudaResourceDesc resDesc{};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = gEnvCuArray;
+
+    cudaTextureDesc texDesc{};
+    texDesc.addressMode[0] = cudaAddressModeWrap;
+    texDesc.addressMode[1] = cudaAddressModeClamp;
+    texDesc.filterMode = cudaFilterModeLinear;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 1;
+
+    cudaCreateTextureObject(&gEnvTexObj, &resDesc, &texDesc, nullptr);
+}
+
+void SetEnvMap(const char* hdrPath) {
+
+
+    int w, h, c;
+    float* data = stbi_loadf(hdrPath, &w, &h, &c, 3);
+    if (!data) {
+        printf("[EnvMap] failed : %s\n", hdrPath);
+        return;
+    }
+    ClearEnvMap();
+    uploadEnvMap(data, w, h);
+    stbi_image_free(data);
+    gHasEnvMap = true;
+    printf("[EnvMap] success : %s (%dx%d)\n", hdrPath, w, h);
+}
+
+
+
+// ===== Texture system =====
+struct GpuTexture {
+    cudaTextureObject_t texObj = 0;
+    cudaArray_t         cuArray = nullptr;
+};
+static std::vector<GpuTexture> gTextures;
+static cudaTextureObject_t* dev_textures = nullptr;
+
+void FreeAllTextures() {
+    for (auto& t : gTextures) {
+        if (t.texObj)  cudaDestroyTextureObject(t.texObj);
+        if (t.cuArray) cudaFreeArray(t.cuArray);
+    }
+    gTextures.clear();
+    cudaFree(dev_textures);
+    dev_textures = nullptr;
+}
+
+int UploadTexture(const float* pixels, int w, int h) {
+    if (!pixels || w <= 0 || h <= 0) return -1;
+
+    GpuTexture tex;
+    cudaChannelFormatDesc desc = cudaCreateChannelDesc<float4>();
+    cudaMallocArray(&tex.cuArray, &desc, w, h);
+
+	// pixels is expected to be in float3 RGB format, we convert it to float4 RGBA with A=0 for CUDA texture
+    cudaMemcpy2DToArray(
+        tex.cuArray, 0, 0,
+        pixels, w * sizeof(float4),
+        w * sizeof(float4), h,
+        cudaMemcpyHostToDevice);
+
+    cudaResourceDesc resDesc{};
+    resDesc.resType = cudaResourceTypeArray;
+    resDesc.res.array.array = tex.cuArray;
+
+    cudaTextureDesc texDesc{};
+    texDesc.addressMode[0] = cudaAddressModeWrap;
+    texDesc.addressMode[1] = cudaAddressModeWrap;
+    texDesc.filterMode = cudaFilterModeLinear;
+    texDesc.readMode = cudaReadModeElementType;
+    texDesc.normalizedCoords = 1;
+
+    cudaCreateTextureObject(&tex.texObj, &resDesc, &texDesc, nullptr);
+
+    int id = (int)gTextures.size();
+    gTextures.push_back(tex);
+    return id;
+}
+
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
@@ -292,7 +414,10 @@ __host__ __device__ inline bool intersectAABB(const AABB& box, const Ray& r, flo
 
 
 
-__device__ __forceinline__ float intersectTriangleMT(const Ray& r, const Tri& tr) {
+__device__ __forceinline__ float intersectTriangleMT(
+    const Ray& r, const Tri& tr,
+    float& outU, float& outV)   
+{
     const float EPS = 1e-7f;
     glm::vec3 e1 = tr.v1 - tr.v0;
     glm::vec3 e2 = tr.v2 - tr.v0;
@@ -305,6 +430,8 @@ __device__ __forceinline__ float intersectTriangleMT(const Ray& r, const Tri& tr
     glm::vec3 q = glm::cross(tvec, e1);
     float v = glm::dot(r.direction, q) * invDet; if (v < 0.f || u + v > 1.f) return -1.f;
     float t = glm::dot(e2, q) * invDet; if (t <= 0.f) return -1.f;
+    outU = u;   
+    outV = v;  
     return t;
 }
 
@@ -570,19 +697,20 @@ __device__ inline bool intersectPrimitiveGeom(
     const Tri* __restrict__ tris,
     const TriBVHNode* __restrict__ triNodes,
     const int* __restrict__ triPrimIdx,
-    float& tHit, glm::vec3& nHit, int& matId)
+    float& tHit, glm::vec3& nHit, int& matId,
+    glm::vec2& uvHit, glm::vec4& tanHit)
 {
     const Geom& g = geoms[primId];
     float t = -1.0f; glm::vec3 pTmp, nTmp; bool outside = true;
 
     if (g.type == CUBE) {
         t = boxIntersectionTest(g, ray, pTmp, nTmp, outside);
-        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; return true; }
+        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; uvHit = glm::vec2(0.0f); tanHit = glm::vec4(1, 0, 0, 1); return true; }
         return false;
     }
     else if (g.type == SPHERE) {
         t = sphereIntersectionTest(g, ray, pTmp, nTmp, outside);
-        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; return true; }
+        if (t > 0.0f && t < tHit) { tHit = t; nHit = nTmp; matId = g.materialid; uvHit = glm::vec2(0.0f); tanHit = glm::vec4(1, 0, 0, 1); return true; }
         return false;
     }
     else if (g.type == MESH) {
@@ -593,11 +721,15 @@ __device__ inline bool intersectPrimitiveGeom(
             bool any = false;
             for (int k = 0; k < g.triCount; ++k) {
                 const Tri& tr = tris[g.triOffset + k];
-                float th = intersectTriangleMT(ray, tr);
+                float bu, bv;
+                float th = intersectTriangleMT(ray, tr, bu, bv);
                 if (th > 0.0f && th < tHit) {
                     tHit = th;
                     nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
                     matId = tr.materialId;
+                    float bw = 1.0f - bu - bv;
+                    uvHit = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
+                    tanHit = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;  
                     any = true;
                 }
             }
@@ -619,11 +751,15 @@ __device__ inline bool intersectPrimitiveGeom(
                     const int triIdx = triPrimIdx[node.firstTri + i];
                     const Tri& tr = tris[triIdx];
 
-                    float th = intersectTriangleMT(ray, tr);
+                    float bu, bv;
+                    float th = intersectTriangleMT(ray, tr, bu, bv);
                     if (th > 0.0f && th < tHit) {
                         tHit = th;
                         nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
                         matId = tr.materialId;
+                        float bw = 1.0f - bu - bv;
+                        uvHit = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
+                        tanHit = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;  
                         hit = true;
                     }
                 }
@@ -651,10 +787,13 @@ __device__ inline void traverseBVH(
     const Tri* __restrict__ tris,
     const TriBVHNode* __restrict__ triNodes,
     const int* __restrict__ triPrimIdx,
-    float& outT, int& outGeom, glm::vec3& outN, int& outMat)
+    float& outT, int& outGeom, glm::vec3& outN, int& outMat,
+    glm::vec2& outUV, glm::vec4& outTan)
 {
     int stack[64]; int sp = 0;
     float tClosest = FLT_MAX; int hitGeom = -1; glm::vec3 nHit(0.f); int mId = -1;
+    glm::vec2 uvClosest(0.f);
+    glm::vec4 tanClosest(1, 0, 0, 1);  
 
     stack[sp++] = 0;
     while (sp) {
@@ -666,8 +805,10 @@ __device__ inline void traverseBVH(
             for (int i = 0; i < node.primCount; ++i) {
                 const int pid = primIdx[node.firstPrim + i];
                 float t = tClosest; glm::vec3 n; int mat;
-                if (intersectPrimitiveGeom(geoms, pid, ray, tris, triNodes, triPrimIdx, t, n, mat)) {
-                    if (t < tClosest) { tClosest = t; hitGeom = pid; nHit = n; mId = mat; }
+                glm::vec2 uv(0.f);  
+                glm::vec4 tan(1, 0, 0, 1);
+                if (intersectPrimitiveGeom(geoms, pid, ray, tris, triNodes, triPrimIdx, t, n, mat, uv, tan)) {
+                    if (t < tClosest) { tClosest = t; hitGeom = pid; nHit = n; mId = mat; uvClosest = uv; }  
                 }
             }
         }
@@ -676,7 +817,7 @@ __device__ inline void traverseBVH(
             if (node.right >= 0) stack[sp++] = node.right;
         }
     }
-    outT = tClosest; outGeom = hitGeom; outN = nHit; outMat = mId;
+    outT = tClosest; outGeom = hitGeom; outN = nHit; outMat = mId; outUV = uvClosest; outTan = tanClosest;  
 }
 
 __device__ inline bool traverseTriBVH(
@@ -685,7 +826,8 @@ __device__ inline bool traverseTriBVH(
     const int* __restrict__ primIdx,
     int root,
     const Tri* __restrict__ tris,
-    float& tHit, glm::vec3& nHit, int& matId)
+    float& tHit, glm::vec3& nHit, int& matId,
+    glm::vec2& uvHit, glm::vec4& tanHit)
 {
     int stack[64]; int sp = 0;
     stack[sp++] = root;
@@ -702,11 +844,16 @@ __device__ inline bool traverseTriBVH(
             for (int i = 0; i < n.triCount; ++i) {
                 const int tid = primIdx[n.firstTri + i];  
                 const Tri& tr = tris[tid];
-                float th = intersectTriangleMT(ray, tr);
+                float bu, bv;
+                float th = intersectTriangleMT(ray, tr, bu, bv);
                 if (th > 0.f && th < tHit) {
                     tHit = th;
                     nHit = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
                     matId = tr.materialId;
+                    float bw = 1.0f - bu - bv;
+                    uvHit = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
+                    tanHit = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;  
+
                     any = true;
                 }
             }
@@ -737,6 +884,12 @@ static void UploadTrisToGPU() {
         temp[i].v0 = h_allTris[i].v0;
         temp[i].v1 = h_allTris[i].v1;
         temp[i].v2 = h_allTris[i].v2;
+        temp[i].uv0 = h_allTris[i].uv0; 
+        temp[i].uv1 = h_allTris[i].uv1; 
+        temp[i].uv2 = h_allTris[i].uv2;
+        temp[i].tan0 = h_allTris[i].tan0;  
+        temp[i].tan1 = h_allTris[i].tan1;  
+        temp[i].tan2 = h_allTris[i].tan2;
         temp[i].materialId = h_allTris[i].materialId;
     }
     cudaMemcpy(dev_tris, temp.data(), g_numTris * sizeof(Tri), cudaMemcpyHostToDevice);
@@ -756,11 +909,33 @@ static void BakeMeshesIntoSceneAndCPUTris(Scene* scene) {
     for (const auto& mi : scene->meshInstances) {
         std::vector<TriCPU> local;
         std::string err;
-        if (!LoadGLTF_AsTris(mi.path, mi.M_world, mi.materialId, local, &err)) {
+        GltfMaterialTextures gltfTex;
+        if (!LoadGLTF_AsTris(mi.path, mi.M_world, mi.materialId, local, &err, &gltfTex)) {
             printf("[GLTF] load failed: %s\n", err.c_str());
             continue;
         }
 
+        Material& mat = scene->materials[mi.materialId];
+        if (gltfTex.albedo.w > 0) {
+            mat.albedoTexId = UploadTexture(
+                gltfTex.albedo.pixels.data(),
+                gltfTex.albedo.w, gltfTex.albedo.h);
+        }
+        if (gltfTex.metallicRoughness.w > 0) {
+            mat.metallicRoughnessTexId = UploadTexture(
+                gltfTex.metallicRoughness.pixels.data(),
+                gltfTex.metallicRoughness.w, gltfTex.metallicRoughness.h);
+        }
+        if (gltfTex.normal.w > 0) {
+            mat.normalTexId = UploadTexture(
+                gltfTex.normal.pixels.data(),
+                gltfTex.normal.w, gltfTex.normal.h);
+        }
+        if (gltfTex.emissive.w > 0) {
+            mat.emissiveTexId = UploadTexture(
+                gltfTex.emissive.pixels.data(),
+                gltfTex.emissive.w, gltfTex.emissive.h);
+        }
 
         glm::vec3 bbMin(FLT_MAX), bbMax(-FLT_MAX);
         for (const auto& t : local) {
@@ -873,6 +1048,31 @@ void pathtraceInit(Scene* scene)
 #endif
 
 
+
+
+    if (!gTextures.empty()) {
+        std::vector<cudaTextureObject_t> texObjs;
+        for (auto& t : gTextures) texObjs.push_back(t.texObj);
+        cudaFree(dev_textures);
+        cudaMalloc(&dev_textures, texObjs.size() * sizeof(cudaTextureObject_t));
+        cudaMemcpy(dev_textures, texObjs.data(),
+            texObjs.size() * sizeof(cudaTextureObject_t),
+            cudaMemcpyHostToDevice);
+    }
+
+    cudaFree(dev_materials);
+    cudaMalloc(&dev_materials, scene->materials.size() * sizeof(Material));
+    cudaMemcpy(dev_materials, scene->materials.data(),
+        scene->materials.size() * sizeof(Material),
+        cudaMemcpyHostToDevice);
+
+
+    static bool firstLoad = true;
+    if (firstLoad) {
+        SetEnvMap("scenes/default.hdr");
+        firstLoad = false;
+    }
+
     checkCUDAError("pathtraceInit");
 }
 
@@ -886,6 +1086,7 @@ void pathtraceFree()
 
     cudaFree(dev_tris); dev_tris = nullptr; g_numTris = 0;
 
+    FreeAllTextures();
 
 	//material sort
 #if ENABLE_MATERIAL_SORT
@@ -911,7 +1112,7 @@ void pathtraceFree()
     cudaFree(dev_triBVHNodes); dev_triBVHNodes = nullptr;
     cudaFree(dev_triPrimIdx);  dev_triPrimIdx = nullptr;
 
-
+     
     // TODO: clean up any extra device memory you created
 
     checkCUDAError("pathtraceFree");
@@ -1024,15 +1225,16 @@ __global__ void computeIntersections(
     const PathSegment seg = pathSegments[path_index];
     float     bestT = FLT_MAX;
     glm::vec3 bestN = glm::vec3(0.f);
+    glm::vec2 bestUV = glm::vec2(0.f);
+    glm::vec4 bestTan = glm::vec4(1, 0, 0, 1);  
     int       bestGeom = -1;
     int       bestMat = -1;
 
 #if ENABLE_BVH
     if (bvhNodes != nullptr && primIdx != nullptr) {
         traverseBVH(seg.ray, bvhNodes, primIdx, geoms, tris,
-            triNodes, triPrimIdx,              
-            bestT, bestGeom, bestN, bestMat);
-
+            triNodes, triPrimIdx,
+            bestT, bestGeom, bestN, bestMat, bestUV, bestTan);  
     }
     else
 #endif
@@ -1043,24 +1245,36 @@ __global__ void computeIntersections(
 
             if (g.type == CUBE) {
                 float t = boxIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
-                if (t > 0.0f && t < bestT) { bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid; }
+                if (t > 0.0f && t < bestT) {
+                    bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
+                    bestUV = glm::vec2(0.f);
+                    bestTan = glm::vec4(1, 0, 0, 1);  
+                }
             }
             else if (g.type == SPHERE) {
                 float t = sphereIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
-                if (t > 0.0f && t < bestT) { bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid; }
+                if (t > 0.0f && t < bestT) {
+                    bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
+                    bestUV = glm::vec2(0.f);
+                    bestTan = glm::vec4(1, 0, 0, 1);  
+                }
             }
             else if (g.type == MESH) {
-                if (tris == nullptr) continue;                   
+                if (tris == nullptr) continue;
                 AABB box; box.minB = g.bboxMin; box.maxB = g.bboxMax;
                 if (!intersectAABB(box, seg.ray, bestT)) continue;
 
                 for (int k = 0; k < g.triCount; ++k) {
                     const Tri& tr = tris[g.triOffset + k];
-                    float tHit = intersectTriangleMT(seg.ray, tr);
+                    float bu, bv;
+                    float tHit = intersectTriangleMT(seg.ray, tr, bu, bv);
                     if (tHit > 0.0f && tHit < bestT) {
                         bestT = tHit;
                         bestN = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
                         bestGeom = i; bestMat = tr.materialId;
+                        float bw = 1.0f - bu - bv;
+                        bestUV = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
+                        bestTan = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;  
                     }
                 }
             }
@@ -1075,9 +1289,37 @@ __global__ void computeIntersections(
         intersections[path_index].t = bestT;
         intersections[path_index].surfaceNormal = bestN;
         intersections[path_index].materialId = bestMat;
+        intersections[path_index].uv = bestUV;
+        intersections[path_index].tangent = bestTan;  
     }
 }
 
+
+__device__ __forceinline__ glm::vec3 sampleEnvMap(
+    cudaTextureObject_t envTex,
+    const glm::vec3& dir,
+    float rotation,
+    float intensity)
+{
+    float phi = atan2f(dir.z, dir.x);
+    float theta = acosf(glm::clamp(dir.y, -1.f, 1.f));
+
+    float u = (phi + PI + rotation) / (2.f * PI);
+    u = u - floorf(u);
+    float v = theta / PI;
+
+    float4 c = tex2D<float4>(envTex, u, v);
+    return glm::vec3(c.x, c.y, c.z) * intensity;
+}
+
+
+__device__ __forceinline__ glm::vec4 sampleTex(
+    const cudaTextureObject_t* textures,
+    int texId, glm::vec2 uv)
+{
+    float4 c = tex2D<float4>(textures[texId], uv.x, uv.y);
+    return glm::vec4(c.x, c.y, c.z, c.w);
+}
 
 __global__ void shadeMaterial(
     int iter,
@@ -1087,7 +1329,13 @@ __global__ void shadeMaterial(
     Material* materials,
     int traceDepth,
     int rrMinDepth,
-    bool rrEnabled)
+    bool rrEnabled,
+    cudaTextureObject_t envTex,
+    float envIntensity,
+    float envRotation,
+    bool hasEnvMap,
+    const cudaTextureObject_t* textures, 
+    int numTextures)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_paths) return;
@@ -1097,17 +1345,38 @@ __global__ void shadeMaterial(
 
     const ShadeableIntersection isect = shadeableIntersections[idx];
     if (isect.t <= 0.0f) {
-        pathSegment.color = glm::vec3(0.0f);
+        if (hasEnvMap) {
+            pathSegment.color *= sampleEnvMap(
+                envTex,
+                glm::normalize(pathSegment.ray.direction),
+                envRotation,
+                envIntensity);
+        }
+        else {
+            pathSegment.color = glm::vec3(0.0f);
+        }
         pathSegment.remainingBounces = 0;
         return;
     }
 
     const Material material = materials[isect.materialId];
 
-    // Emissive
+
+    if (textures != nullptr && material.emissiveTexId >= 0 && material.emissiveTexId < numTextures) {
+        float4 s = tex2D<float4>(textures[material.emissiveTexId], isect.uv.x, isect.uv.y);
+        glm::vec3 emissive = glm::vec3(s.x, s.y, s.z);
+        if (emissive.x + emissive.y + emissive.z > 0.01f) {
+            pathSegment.color *= emissive;
+            pathSegment.remainingBounces = 0;
+            return;
+        }
+    }
+
     if (material.emittance > 0.0f) {
         if (glm::dot(isect.surfaceNormal, -pathSegment.ray.direction) > 0.0f) {
             pathSegment.color *= (material.color * material.emittance);
+        } else {
+            pathSegment.color = glm::vec3(0.0f);
         }
         pathSegment.remainingBounces = 0;
         return;
@@ -1123,7 +1392,6 @@ __global__ void shadeMaterial(
 
     const int bouncesDone = traceDepth - pathSegment.remainingBounces;
 
-    // Refractive / glass
     if (material.hasRefractive > 0.0f) {
         if (rrEnabled && bouncesDone >= rrMinDepth) {
             float pSurvive = fmaxf(fmaxf(pathSegment.color.x, pathSegment.color.y), pathSegment.color.z);
@@ -1153,9 +1421,7 @@ __global__ void shadeMaterial(
         float r0 = (etaI - etaT) / (etaI + etaT); r0 *= r0;
         float R = r0 + (1.0f - r0) * powf(1.0f - cosI, 5.0f);
 
-        // Roughness 
         float rough = fmaxf(0.0f, fminf(material.roughness, 1.0f));
-
         auto sampleAroundDir = [&](const glm::vec3& dir) -> glm::vec3 {
             if (rough <= 1e-6f) return glm::normalize(dir);
             float alpha = fmaxf(1e-4f, rough);
@@ -1165,19 +1431,15 @@ __global__ void shadeMaterial(
             float cosTheta = powf(u1, 1.0f / (k + 1.0f));
             float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
             float phi = 2.0f * PI * u2;
-
             glm::vec3 d = glm::normalize(dir);
             glm::vec3 t = (fabsf(d.z) < 0.999f)
                 ? glm::normalize(glm::cross(glm::vec3(0, 0, 1), d))
                 : glm::normalize(glm::cross(glm::vec3(0, 1, 0), d));
             glm::vec3 b = glm::cross(d, t);
-
             glm::vec3 local(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
-            glm::vec3 world = local.x * t + local.y * b + local.z * d;
-            return glm::normalize(world);
+            return glm::normalize(local.x * t + local.y * b + local.z * d);
             };
 
-        // Continuous reflectivity 
         float reflectiveMix = glm::clamp(material.hasReflective, 0.0f, 1.0f);
         float reflectProb = reflectiveMix * R;
 
@@ -1203,79 +1465,106 @@ __global__ void shadeMaterial(
         return;
     }
 
-
-
-// Perfect specular 
-    if (material.hasReflective > 0.0f && material.hasRefractive <= 0.0f) {
-        if (rrEnabled && bouncesDone >= rrMinDepth) {
-            float pSurvive = fmaxf(fmaxf(pathSegment.color.x, pathSegment.color.y), pathSegment.color.z);
-            pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
-            if (u01(rng) > pSurvive) {
-                pathSegment.color = glm::vec3(0.0f);
-                pathSegment.remainingBounces = 0;
-                return;
-            }
-            else {
-                pathSegment.color *= (1.0f / pSurvive);
-            }
+    if (rrEnabled && bouncesDone >= rrMinDepth) {
+        float pSurvive = fmaxf(fmaxf(pathSegment.color.x, pathSegment.color.y), pathSegment.color.z);
+        pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
+        if (u01(rng) > pSurvive) {
+            pathSegment.color = glm::vec3(0.0f);
+            pathSegment.remainingBounces = 0;
+            return;
         }
-
-        const glm::vec3 wo = pathSegment.ray.direction;
-        const glm::vec3 N = n; 
-
-        glm::vec3 idealR = glm::reflect(wo, N);
-
-        float rough = fmaxf(0.0f, fminf(material.roughness, 1.0f));
-        auto sampleAroundDir = [&](const glm::vec3& dir) -> glm::vec3 {
-            if (rough <= 1e-6f) return glm::normalize(dir);
-            float alpha = fmaxf(1e-4f, rough);
-            float k = fmaxf(0.0f, 1.0f / (alpha * alpha) - 1.0f);
-            float u1 = u01(rng), u2 = u01(rng);
-            float cosTheta = powf(u1, 1.0f / (k + 1.0f));
-            float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
-            float phi = 2.0f * PI * u2;
-
-            glm::vec3 d = glm::normalize(dir);
-            glm::vec3 t = (fabsf(d.z) < 0.999f)
-                ? glm::normalize(glm::cross(glm::vec3(0, 0, 1), d))
-                : glm::normalize(glm::cross(glm::vec3(0, 1, 0), d));
-            glm::vec3 b = glm::cross(d, t);
-            glm::vec3 local(cosf(phi) * sinTheta, sinf(phi) * sinTheta, cosTheta);
-            return glm::normalize(local.x * t + local.y * b + local.z * d);
-            };
-
-        glm::vec3 rdir = sampleAroundDir(idealR);
-
-        glm::vec3 F = glm::clamp(material.color, glm::vec3(0.0f), glm::vec3(1.0f));
-        pathSegment.color *= F;
-
-        const float EPS = 2e-3f;
-        pathSegment.ray.origin = p + N * EPS;
-        pathSegment.ray.direction = rdir;
-        pathSegment.remainingBounces--;
-        return;
+        else {
+            pathSegment.color *= (1.0f / pSurvive);
+        }
     }
 
-    // Diffuse 
-    {
-        glm::vec3 albedo = glm::clamp(material.color, glm::vec3(0.f), glm::vec3(1.f));
-        glm::vec3 prospective = pathSegment.color * albedo;
+    const glm::vec3 V = -pathSegment.ray.direction;
 
-        if (rrEnabled && bouncesDone >= rrMinDepth) {
-            float pSurvive = fmaxf(fmaxf(prospective.x, prospective.y), prospective.z);
-            pSurvive = fminf(fmaxf(pSurvive, 0.05f), 0.99f);
-            if (u01(rng) > pSurvive) {
-                pathSegment.color = glm::vec3(0.0f);
-                pathSegment.remainingBounces = 0;
-                return;
-            }
-            else {
-                pathSegment.color *= (1.0f / pSurvive);
-            }
-        }
-
-        scatterRay(pathSegment, p, n, material, rng);
+    // albedo
+    glm::vec3 albedo = glm::clamp(material.color, glm::vec3(0.f), glm::vec3(1.f));
+    if (material.albedoTexId >= 0 && material.albedoTexId < numTextures && textures != nullptr) {
+        float4 s = tex2D<float4>(textures[material.albedoTexId], isect.uv.x, isect.uv.y);
+        albedo = glm::vec3(s.x, s.y, s.z);
     }
+
+    // roughness / metallic
+    float roughness = glm::clamp(material.roughness, 0.04f, 1.0f);
+    float metallic = glm::clamp(material.metallic, 0.0f, 1.0f);
+    if (material.metallicRoughnessTexId >= 0 && material.metallicRoughnessTexId < numTextures && textures != nullptr) {
+        float4 s = tex2D<float4>(textures[material.metallicRoughnessTexId], isect.uv.x, isect.uv.y);
+        roughness = glm::clamp(s.y, 0.04f, 1.0f);  // G
+        metallic = glm::clamp(s.z, 0.0f, 1.0f);  // B
+    }
+
+	// normal mapping
+    if (textures != nullptr && material.normalTexId >= 0 && material.normalTexId < numTextures) {
+		// sample normal map (in tangent space)
+        float4 s = tex2D<float4>(textures[material.normalTexId], isect.uv.x, isect.uv.y);
+        glm::vec3 nTangent = glm::normalize(glm::vec3(
+            s.x * 2.0f - 1.0f,
+            s.y * 2.0f - 1.0f,
+            s.z * 2.0f - 1.0f
+        ));
+
+		// construct tangent and bitangent 
+        glm::vec3 T = glm::normalize(glm::vec3(isect.tangent));
+        T = glm::normalize(T - glm::dot(T, n) * n);  // Gram-Schmidt 
+        glm::vec3 B = glm::cross(n, T) * isect.tangent.w;  // w 
+
+		// tangent to world space
+        n = glm::normalize(T * nTangent.x + B * nTangent.y + n * nTangent.z);
+    }
+
+
+    glm::vec3 F0 = glm::mix(glm::vec3(0.04f), albedo, metallic);
+
+    float NdotV = fmaxf(glm::dot(n, V), 1e-4f);
+    glm::vec3 Fapx = F_Schlick(NdotV, F0);
+    float specProb = (Fapx.x + Fapx.y + Fapx.z) / 3.0f;
+
+    if (material.hasReflective <= 0.0f && metallic <= 0.0f)
+        specProb = 0.0f;
+    if (metallic >= 0.99f)
+        specProb = 1.0f;
+
+    specProb = glm::clamp(specProb, 0.0f, 1.0f);
+
+    glm::vec3 newDir;
+    glm::vec3 weight;
+    const float EPS = 1e-4f;
+
+    if (u01(rng) < specProb) {
+        glm::vec3 H = sampleGGX(n, roughness, rng);
+        newDir = glm::reflect(-V, H);
+
+        if (glm::dot(newDir, n) <= 0.0f) {
+            newDir = calculateRandomDirectionInHemisphere(n, rng);
+            weight = albedo * (1.0f - metallic) / fmaxf(1.0f - specProb, 1e-4f);
+        }
+        else {
+            float NdotL = fmaxf(glm::dot(n, newDir), 1e-4f);
+            float NdotH = fmaxf(glm::dot(n, H), 1e-4f);
+            float VdotH = fmaxf(glm::dot(V, H), 1e-4f);
+            glm::vec3 F = F_Schlick(VdotH, F0);
+            float     G = G_Smith(NdotV, NdotL, roughness);
+            weight = (F * G * VdotH) / fmaxf(NdotH * NdotV * specProb, 1e-7f);
+            weight *= NdotL;
+        }
+        pathSegment.ray.origin = p + n * EPS;
+    }
+    else {
+        newDir = calculateRandomDirectionInHemisphere(n, rng);
+        glm::vec3 H = glm::normalize(V + newDir);
+        float VdotH = fmaxf(glm::dot(V, H), 1e-4f);
+        glm::vec3 F = F_Schlick(VdotH, F0);
+        glm::vec3 kd = (glm::vec3(1.0f) - F) * (1.0f - metallic);
+        weight = kd * albedo / fmaxf(1.0f - specProb, 1e-4f);
+        pathSegment.ray.origin = p + n * EPS;
+    }
+
+    pathSegment.color *= glm::clamp(weight, glm::vec3(0.f), glm::vec3(1.f));
+    pathSegment.ray.direction = glm::normalize(newDir);
+    pathSegment.remainingBounces--;
 }
 
 
@@ -1288,7 +1577,10 @@ __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iteration
     if (index < nPaths)
     {
         PathSegment iterationPath = iterationPaths[index];
-        image[iterationPath.pixelIndex] += iterationPath.color;
+        if (iterationPath.remainingBounces <= 0)
+        {
+            image[iterationPath.pixelIndex] += iterationPath.color;
+        }
     }
 }
 
@@ -1441,7 +1733,13 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_materials,
             traceDepth,
             rrMinDepth,
-            rrEnabled
+            rrEnabled,
+            gEnvTexObj,
+            gEnvIntensity,
+            gEnvRotation,
+            gHasEnvMap,
+            dev_textures,           
+            (int)gTextures.size()
             );
 
         checkCUDAError("shadeMaterial");
@@ -1497,7 +1795,9 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 
     // Assemble this iteration and apply it to the image
     dim3 numBlocksPixels = (pixelcount + blockSize1d - 1) / blockSize1d;
-    finalGather<<<numBlocksPixels, blockSize1d>>>(num_paths, dev_image, dev_paths);
+    if (!gEnableStreamCompaction) {
+        finalGather << <numBlocksPixels, blockSize1d >> > (num_paths, dev_image, dev_paths);
+    }
 
     ///////////////////////////////////////////////////////////////////////////
 

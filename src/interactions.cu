@@ -45,28 +45,62 @@ __host__ __device__ glm::vec3 calculateRandomDirectionInHemisphere(
 }
 
 __host__ __device__ void scatterRay(
-    PathSegment & pathSegment,
+    PathSegment& pathSegment,
     glm::vec3 intersect,
     glm::vec3 normal,
-    const Material &m,
-    thrust::default_random_engine &rng)
+    const Material& m,
+    thrust::default_random_engine& rng)
 {
+    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
 
-    // Face-forward normal to avoid sampling the wrong hemisphere
-    if (glm::dot(normal, -pathSegment.ray.direction) < 0.f) {
+    if (glm::dot(normal, -pathSegment.ray.direction) < 0.f)
         normal = -normal;
+
+    const glm::vec3 N = normal;
+    const glm::vec3 V = -pathSegment.ray.direction;
+    const glm::vec3 albedo = glm::clamp(m.color, glm::vec3(0.f), glm::vec3(1.f));
+    const float roughness = glm::clamp(m.roughness, 0.04f, 1.0f);
+    const float metallic = glm::clamp(m.metallic, 0.0f, 1.0f);
+
+    glm::vec3 F0 = glm::mix(glm::vec3(0.04f), albedo, metallic);
+
+    float NdotV = fmaxf(glm::dot(N, V), 1e-4f);
+    glm::vec3 F_approx = F_Schlick(NdotV, F0);
+    float specProb = glm::clamp((F_approx.x + F_approx.y + F_approx.z) / 3.0f, 0.0f, 1.0f);
+
+    if (metallic >= 0.99f) specProb = 1.0f;
+
+    glm::vec3 newDir;
+    glm::vec3 weight;
+
+    if (u01(rng) < specProb) {
+        glm::vec3 H = sampleGGX(N, roughness, rng);
+        newDir = glm::reflect(-V, H);
+
+        if (glm::dot(newDir, N) <= 0.0f) {
+            newDir = calculateRandomDirectionInHemisphere(N, rng);
+            weight = albedo * (1.0f - metallic) / fmaxf(1.0f - specProb, 1e-4f);
+        }
+        else {
+            float NdotL = fmaxf(glm::dot(N, newDir), 1e-4f);
+            float NdotH = fmaxf(glm::dot(N, H), 1e-4f);
+            float VdotH = fmaxf(glm::dot(V, H), 1e-4f);
+            glm::vec3 F = F_Schlick(VdotH, F0);
+            float     G = G_Smith(NdotV, NdotL, roughness);
+            weight = F * G / fmaxf(NdotV * specProb, 1e-7f);
+        }
+    }
+    else {
+        newDir = calculateRandomDirectionInHemisphere(N, rng);
+        glm::vec3 H = glm::normalize(V + newDir);
+        float VdotH = fmaxf(glm::dot(V, H), 1e-4f);
+        glm::vec3 F = F_Schlick(VdotH, F0);
+        glm::vec3 kd = (glm::vec3(1.0f) - F) * (1.0f - metallic);
+        weight = kd * albedo / fmaxf(1.0f - specProb, 1e-4f);
     }
 
-    // Cosine-weighted hemisphere sampling 
-    glm::vec3 newDir = calculateRandomDirectionInHemisphere(normal, rng);
-
-    // For cosine-weighted sampling with Lambert BRDF:
- 
-    pathSegment.color *= glm::clamp(m.color, glm::vec3(0.0f), glm::vec3(1.0f));
-
-    // Offset origin to avoid self-intersection, then set new ray
+    pathSegment.color *= glm::clamp(weight, glm::vec3(0.f), glm::vec3(1.f));
     pathSegment.ray.origin = intersect + normal * 1e-4f;
-    pathSegment.ray.direction = newDir;
-
+    pathSegment.ray.direction = glm::normalize(newDir);
     pathSegment.remainingBounces--;
 }

@@ -1,0 +1,30 @@
+{
+  "Materials": {
+    "mat_helmet": {
+      "TYPE": "PBR",
+      "RGB": [ 1.0, 1.0, 1.0 ],
+      "ROUGHNESS": 1.0,
+      "METALLIC": 0.0
+    }
+  },
+  "Camera": {
+    "RES": [ 1280, 720 ],
+    "FOVY": 38.0,
+    "ITERATIONS": 5000,
+    "DEPTH": 10,
+    "FILE": "helmet",
+    "EYE": [ 0.0, 0.0, 3.0 ],
+    "LOOKAT": [ 0.0, 0.0, 0.0 ],
+    "UP": [ 0.0, 1.0, 0.0 ]
+  },
+  "Objects": [
+    {
+      "TYPE": "mesh",
+      "MATERIAL": "mat_helmet",
+      "FILE": "scenes/gltf/DamagedHelmet.glb",
+      "TRANS": [ 0.0, 0.0, 0.0 ],
+      "ROTAT": [ 90.0, 0.0, 0.0 ],
+      "SCALE": [ 1.0, 1.0, 1.0 ]
+    }
+  ]
+}

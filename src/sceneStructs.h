@@ -54,6 +54,13 @@ struct Material
     float indexOfRefraction;
     float emittance;
     float roughness;
+    float metallic = 0.0f;
+
+    int albedoTexId = -1;
+    int metallicRoughnessTexId = -1;
+    int normalTexId = -1;
+    int emissiveTexId = -1;
+    int occlusionTexId = -1;
 };
 
 struct Camera
@@ -98,4 +105,5 @@ struct ShadeableIntersection
   glm::vec3 surfaceNormal;
   int materialId;
   glm::vec2 uv = glm::vec2(0.0f); // TODO: for texturing
+  glm::vec4 tangent = glm::vec4(1, 0, 0, 1);
 };

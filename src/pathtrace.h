@@ -21,3 +21,16 @@ void SetRREnabled(bool v);
 bool GetRREnabled();
 void SetRRMinDepth(int d);
 int  GetRRMinDepth();
+
+// ===== Environment Map =====
+void  SetEnvMap(const char* hdrPath);
+void  ClearEnvMap();
+bool  HasEnvMap();
+void  SetEnvIntensity(float v);
+float GetEnvIntensity();
+void  SetEnvRotation(float radians);
+float GetEnvRotation();
+
+// ===== Texture =====
+int  UploadTexture(const float* pixels, int w, int h);
+void FreeAllTextures();
