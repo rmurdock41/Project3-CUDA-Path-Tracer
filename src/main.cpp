@@ -1,6 +1,7 @@
 #include "glslUtility.hpp"
 #include "image.h"
 #include "pathtrace.h"
+#include "postprocess.h"
 #include "scene.h"
 #include "sceneStructs.h"
 #include "utilities.h"
@@ -600,13 +601,20 @@ void saveImage()
     // output image file
     Image img(width, height);
 
+    std::vector<glm::vec3> linearImage(width * height);
+    for (int i = 0; i < width * height; ++i)
+    {
+        linearImage[i] = renderState->image[i] / samples;
+    }
+    const std::vector<glm::vec3> outputImage = applyPostProcessCPU(
+        linearImage, width, height, renderState->camera);
+
     for (int x = 0; x < width; x++)
     {
         for (int y = 0; y < height; y++)
         {
             int index = x + (y * width);
-            glm::vec3 pix = renderState->image[index];
-            img.setPixel(width - 1 - x, y, glm::vec3(pix) / samples);
+            img.setPixel(width - 1 - x, y, outputImage[index]);
         }
     }
 
