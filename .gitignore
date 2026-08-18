@@ -558,3 +558,17 @@ xcuserdata
 *.moved-aside
 *.xcuserstate
 CUDAPathTracer.zip
+
+# Portfolio source-only update
+/renders/
+/web_assets/
+/scenes/gltf/
+/scenes/LadyMaria_*.json
+/scenes/astral_clocktower*.json
+/scenes/pbr_material_grid.json
+/*.png
+*.zip
+*.glb
+*.gltf
+*.bin
+stream_compaction/.cproject

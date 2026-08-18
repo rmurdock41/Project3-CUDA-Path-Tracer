@@ -15,7 +15,19 @@ CUDA Path Tracer
 
 ![Cover Image](img/top.png)
 
-*[Lady Maria from BLoodborne], 5000 samples, rendered with BVH acceleration*
+*Lady Maria from Bloodborne, 5000 samples, rendered with BVH acceleration*
+
+### Latest Source Update
+
+- The interactive OpenGL preview now fits the render inside the available
+  framebuffer without changing the output resolution or aspect ratio.
+- Emissive materials can be hidden from primary camera rays while remaining
+  visible to secondary rays, allowing light-card illumination without visible
+  rectangular emitters in the final render.
+
+New scene models, generated render outputs, build products, and temporary
+capture files are intentionally excluded from this source update. Curated
+project images remain under `img/`.
 
 ---
 

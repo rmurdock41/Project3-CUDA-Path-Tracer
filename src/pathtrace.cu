@@ -1360,6 +1360,16 @@ __global__ void shadeMaterial(
     }
 
     const Material material = materials[isect.materialId];
+    const int bouncesDone = traceDepth - pathSegment.remainingBounces;
+    glm::vec3 p = pathSegment.ray.origin + isect.t * pathSegment.ray.direction;
+
+    // Camera-invisible light cards are transparent only to primary rays. They
+    // remain emissive geometry for bounced rays, so they still light the scene
+    // without appearing as rectangles in the rendered image.
+    if (material.cameraVisible == 0 && bouncesDone == 0) {
+        pathSegment.ray.origin = p + glm::normalize(pathSegment.ray.direction) * 2e-3f;
+        return;
+    }
 
 
     if (textures != nullptr && material.emissiveTexId >= 0 && material.emissiveTexId < numTextures) {
@@ -1382,15 +1392,12 @@ __global__ void shadeMaterial(
         return;
     }
 
-    glm::vec3 p = pathSegment.ray.origin + isect.t * pathSegment.ray.direction;
     glm::vec3 n = glm::normalize(isect.surfaceNormal);
     if (glm::dot(n, -pathSegment.ray.direction) < 0.0f) n = -n;
 
     thrust::default_random_engine rng =
         makeSeededRandomEngine(iter, pathSegment.pixelIndex, pathSegment.remainingBounces);
     thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
-
-    const int bouncesDone = traceDepth - pathSegment.remainingBounces;
 
     if (material.hasRefractive > 0.0f) {
         if (rrEnabled && bouncesDone >= rrMinDepth) {

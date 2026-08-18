@@ -122,6 +122,9 @@ void Scene::loadFromJSON(const std::string& jsonName)
                 newMaterial.metallic = (float)p["METALLIC"];
             }
         }
+        if (p.contains("CAMERA_VISIBLE")) {
+            newMaterial.cameraVisible = (bool)p["CAMERA_VISIBLE"] ? 1 : 0;
+        }
         MatNameToID[name] = materials.size();
         materials.emplace_back(newMaterial);
     }
