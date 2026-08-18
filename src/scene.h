@@ -13,6 +13,11 @@ struct MeshInstance {
     glm::mat4   M_world;      
 };
 
+struct FogCardConfig {
+    FogCard card;
+    std::string texturePath;
+};
+
 class Scene
 {
 private:
@@ -25,4 +30,5 @@ public:
     RenderState state;
 
     std::vector<MeshInstance> meshInstances;
+    std::vector<FogCardConfig> fogCards;
 };

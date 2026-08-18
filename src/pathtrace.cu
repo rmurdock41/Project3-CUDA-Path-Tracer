@@ -20,6 +20,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 #include "mesh_loader.h"
 
 #include "tinygltf/stb_image.h"
@@ -93,8 +94,11 @@ static ShadeableIntersection* dev_intersections_compacted = nullptr;
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
 #if ERRORCHECK
-    cudaDeviceSynchronize();
-    cudaError_t err = cudaGetLastError();
+    // Non-blocking launch check. Synchronizing here serialized the entire
+    // renderer after nearly every kernel and caused periodic GUI stalls.
+    // Execution-time errors are still reported by later blocking CUDA calls
+    // such as device-to-host copies and final synchronization points.
+    cudaError_t err = cudaPeekAtLastError();
     if (cudaSuccess == err)
     {
         return;
@@ -188,8 +192,115 @@ __global__ void accumulateTerminated(int n, const PathSegment* paths, glm::vec3*
 
 
 
-//Kernel that writes the image to the OpenGL PBO directly.
-__global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm::vec3* image)
+__device__ __forceinline__ glm::vec3 sampleAccumulatedImage(
+    const glm::vec3* image,
+    glm::ivec2 resolution,
+    int iter,
+    float x,
+    float y)
+{
+    int sx = static_cast<int>(floorf(x + 0.5f));
+    int sy = static_cast<int>(floorf(y + 0.5f));
+    sx = sx < 0 ? 0 : (sx >= resolution.x ? resolution.x - 1 : sx);
+    sy = sy < 0 ? 0 : (sy >= resolution.y ? resolution.y - 1 : sy);
+    return image[sx + sy * resolution.x] / static_cast<float>(iter);
+}
+
+__device__ __forceinline__ glm::vec3 hdrBrightPass(const glm::vec3& color, float threshold)
+{
+    const float brightness = fmaxf(color.x, fmaxf(color.y, color.z));
+    if (brightness <= threshold) {
+        return glm::vec3(0.0f);
+    }
+    const float scale = fminf(fmaxf((brightness - threshold) / fmaxf(brightness, 1.0e-5f), 0.0f), 1.0f);
+    return color * scale;
+}
+
+__device__ __forceinline__ glm::vec3 acesToneMap(const glm::vec3& color)
+{
+    const glm::vec3 numerator = color * (2.51f * color + glm::vec3(0.03f));
+    const glm::vec3 denominator = color * (2.43f * color + glm::vec3(0.59f)) + glm::vec3(0.14f);
+    return glm::clamp(numerator / denominator, glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
+__device__ __forceinline__ glm::vec3 gammaCorrect(const glm::vec3& color, float gamma)
+{
+    const float invGamma = 1.0f / fmaxf(gamma, 0.01f);
+    return glm::vec3(
+        powf(fminf(fmaxf(color.x, 0.0f), 1.0f), invGamma),
+        powf(fminf(fmaxf(color.y, 0.0f), 1.0f), invGamma),
+        powf(fminf(fmaxf(color.z, 0.0f), 1.0f), invGamma));
+}
+
+__device__ __forceinline__ float postSmoothstep(float edge0, float edge1, float value)
+{
+    const float range = fmaxf(edge1 - edge0, 1.0e-5f);
+    const float t = fminf(fmaxf((value - edge0) / range, 0.0f), 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__device__ __forceinline__ float godRayConeMask(const glm::vec2& uv, const Camera& camera)
+{
+    glm::vec2 direction = camera.godRaysTarget - camera.godRaysCenter;
+    const float directionLength = glm::length(direction);
+    if (directionLength < 1.0e-5f) {
+        return 1.0f;
+    }
+    direction /= directionLength;
+
+    const glm::vec2 relative = uv - camera.godRaysCenter;
+    const float along = glm::dot(relative, direction);
+    const float maxLength = fmaxf(camera.godRaysLength, 1.0e-4f);
+    if (along < 0.0f || along > maxLength) {
+        return 0.0f;
+    }
+
+    const float progress = fminf(fmaxf(along / maxLength, 0.0f), 1.0f);
+    const float halfWidth = fmaxf(camera.godRaysWidth, 1.0e-4f) *
+        (0.18f + 0.82f * progress);
+    const float perpendicular = fabsf(relative.x * direction.y - relative.y * direction.x);
+    const float softness = fminf(fmaxf(camera.godRaysSoftness, 0.01f), 0.99f);
+    const float sideMask = 1.0f - postSmoothstep(
+        halfWidth * (1.0f - softness), halfWidth, perpendicular);
+    const float endMask = 1.0f - postSmoothstep(maxLength * 0.82f, maxLength, along);
+    return sideMask * endMask;
+}
+
+__device__ __forceinline__ float godRayHazeMask(const glm::vec2& uv, const Camera& camera)
+{
+    const glm::vec2 radius = glm::max(camera.godRaysHazeRadius, glm::vec2(1.0e-4f));
+    const glm::vec2 offset = (uv - camera.godRaysHazeCenter) / radius;
+    const float distance = glm::length(offset);
+    const float falloff = 1.0f - postSmoothstep(0.05f, 1.0f, distance);
+    return falloff * falloff * (3.0f - 2.0f * falloff);
+}
+
+__device__ __forceinline__ void godRaySubjectMasks(
+    const glm::vec2& uv,
+    const Camera& camera,
+    float& subjectMask,
+    float& rimMask)
+{
+    const glm::vec2 radius = glm::max(
+        camera.godRaysHazeSubjectRadius, glm::vec2(1.0e-4f));
+    const glm::vec2 offset = (uv - camera.godRaysHazeSubjectCenter) / radius;
+    const float distance = glm::length(offset);
+    const float rimWidth = fminf(fmaxf(camera.godRaysHazeRimWidth, 0.02f), 0.45f);
+
+    subjectMask = 1.0f - postSmoothstep(1.0f - rimWidth, 1.0f, distance);
+    const float outerMask = 1.0f - postSmoothstep(1.0f, 1.0f + rimWidth, distance);
+    const float innerMask = 1.0f - postSmoothstep(1.0f - rimWidth, 1.0f, distance);
+    rimMask = fminf(fmaxf(outerMask - innerMask, 0.0f), 1.0f);
+}
+
+// Kernel that writes the image to the OpenGL PBO directly. Post-processing is
+// evaluated from the HDR accumulation buffer so the preview matches saved PNGs.
+__global__ void sendImageToPBO(
+    uchar4* pbo,
+    glm::ivec2 resolution,
+    int iter,
+    glm::vec3* image,
+    Camera camera)
 {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -197,12 +308,132 @@ __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm
     if (x < resolution.x && y < resolution.y)
     {
         int index = x + (y * resolution.x);
-        glm::vec3 pix = image[index];
+        glm::vec3 pix = image[index] / static_cast<float>(iter);
+
+        if (camera.postEnabled)
+        {
+            const float exposure = fmaxf(camera.exposure, 0.0f);
+            glm::vec3 combined = glm::max(pix * exposure, glm::vec3(0.0f));
+
+            if (camera.bloomEnabled && camera.bloomStrength > 0.0f && camera.bloomRadius > 0.0f)
+            {
+                const int sampleCount = camera.bloomSamples < 1 ? 1 :
+                    (camera.bloomSamples > 64 ? 64 : camera.bloomSamples);
+                const float goldenAngle = 2.39996323f;
+                glm::vec3 bloom(0.0f);
+                float totalWeight = 0.0f;
+
+                for (int i = 0; i < sampleCount; ++i)
+                {
+                    const float t = (static_cast<float>(i) + 0.5f) / static_cast<float>(sampleCount);
+                    const float radius = camera.bloomRadius * sqrtf(t);
+                    const float angle = goldenAngle * static_cast<float>(i);
+                    const float weight = 1.0f - 0.75f * t;
+                    const glm::vec3 sample = sampleAccumulatedImage(
+                        image,
+                        resolution,
+                        iter,
+                        static_cast<float>(x) + cosf(angle) * radius,
+                        static_cast<float>(y) + sinf(angle) * radius) * exposure;
+                    bloom += hdrBrightPass(sample, camera.bloomThreshold) * weight;
+                    totalWeight += weight;
+                }
+
+                combined += bloom * (camera.bloomStrength / fmaxf(totalWeight, 1.0e-5f));
+            }
+
+            if (camera.godRaysEnabled)
+            {
+                const glm::vec2 pixelUv(
+                    (static_cast<float>(x) + 0.5f) / static_cast<float>(resolution.x),
+                    (static_cast<float>(y) + 0.5f) / static_cast<float>(resolution.y));
+                if (camera.godRaysStrength > 0.0f && camera.godRaysWeight > 0.0f)
+                {
+                const int sampleCount = camera.godRaysSamples < 1 ? 1 :
+                    (camera.godRaysSamples > 96 ? 96 : camera.godRaysSamples);
+                glm::vec2 sampleUv = pixelUv;
+                glm::vec2 rayStep(0.0f);
+                if (camera.godRaysDirectionalEnabled)
+                {
+                    const float directionLength = glm::length(camera.godRaysDirection);
+                    if (directionLength > 1.0e-5f)
+                    {
+                        rayStep = -(camera.godRaysDirection / directionLength) *
+                            (camera.godRaysDensity / static_cast<float>(sampleCount));
+                    }
+                }
+                else if (camera.godRaysConvergeEnabled)
+                {
+                    const glm::vec2 awayFromTarget = sampleUv - camera.godRaysTarget;
+                    const float distanceFromTarget = glm::length(awayFromTarget);
+                    if (distanceFromTarget > 1.0e-5f)
+                    {
+                        rayStep = (awayFromTarget / distanceFromTarget) *
+                            (camera.godRaysDensity / static_cast<float>(sampleCount));
+                    }
+                }
+                else
+                {
+                    rayStep = -((sampleUv - camera.godRaysCenter) *
+                        (camera.godRaysDensity / static_cast<float>(sampleCount)));
+                }
+                glm::vec3 rays(0.0f);
+                float illuminationDecay = 1.0f;
+
+                for (int i = 0; i < sampleCount; ++i)
+                {
+                    sampleUv += rayStep;
+                    const glm::vec3 sample = sampleAccumulatedImage(
+                        image,
+                        resolution,
+                        iter,
+                        sampleUv.x * static_cast<float>(resolution.x) - 0.5f,
+                        sampleUv.y * static_cast<float>(resolution.y) - 0.5f) * exposure;
+                    float sourceWeight = 1.0f;
+                    if (camera.godRaysConvergeEnabled || camera.godRaysDirectionalEnabled)
+                    {
+                        const float vertical = postSmoothstep(
+                            camera.godRaysVerticalStart,
+                            camera.godRaysVerticalEnd,
+                            sampleUv.y);
+                        sourceWeight = camera.godRaysVerticalMin +
+                            (1.0f - camera.godRaysVerticalMin) * vertical;
+                    }
+                    rays += hdrBrightPass(sample, camera.godRaysThreshold) *
+                        (illuminationDecay * camera.godRaysWeight * sourceWeight);
+                    illuminationDecay *= camera.godRaysDecay;
+                }
+
+                const float focusMask = camera.godRaysFocusEnabled ?
+                    godRayConeMask(pixelUv, camera) : 1.0f;
+                const float convergenceEndMask =
+                    (camera.godRaysConvergeEnabled || camera.godRaysDirectionalEnabled) ?
+                    (1.0f - postSmoothstep(
+                        camera.godRaysEndY - 0.03f,
+                        camera.godRaysEndY,
+                        pixelUv.y)) : 1.0f;
+                combined += rays *
+                    (camera.godRaysStrength * focusMask * convergenceEndMask);
+                }
+                const float hazeMask = godRayHazeMask(pixelUv, camera);
+                float subjectMask = 0.0f;
+                float rimMask = 0.0f;
+                godRaySubjectMasks(pixelUv, camera, subjectMask, rimMask);
+                const float subjectVisibility = 1.0f -
+                    fminf(fmaxf(camera.godRaysHazeSubjectProtect, 0.0f), 1.0f) * subjectMask;
+                combined += camera.godRaysHazeColor *
+                    (camera.godRaysHazeStrength * hazeMask * subjectVisibility);
+                combined += camera.godRaysHazeColor *
+                    (camera.godRaysHazeRimStrength * hazeMask * rimMask);
+            }
+
+            pix = gammaCorrect(acesToneMap(combined), camera.gamma);
+        }
 
         glm::ivec3 color;
-        color.x = glm::clamp((int)(pix.x / iter * 255.0), 0, 255);
-        color.y = glm::clamp((int)(pix.y / iter * 255.0), 0, 255);
-        color.z = glm::clamp((int)(pix.z / iter * 255.0), 0, 255);
+        color.x = glm::clamp((int)(pix.x * 255.0f), 0, 255);
+        color.y = glm::clamp((int)(pix.y * 255.0f), 0, 255);
+        color.z = glm::clamp((int)(pix.z * 255.0f), 0, 255);
 
         // Each thread writes one pixel location in the texture (textel)
         pbo[index].w = 0;
@@ -220,6 +451,8 @@ static Geom* dev_geoms = NULL;
 static Material* dev_materials = NULL;
 static PathSegment* dev_paths = NULL;
 static ShadeableIntersection* dev_intersections = NULL;
+static FogCard* dev_fogCards = nullptr;
+static int g_numFogCards = 0;
 
 // ===== Environment Map =====
 static cudaTextureObject_t gEnvTexObj = 0;
@@ -333,6 +566,60 @@ int UploadTexture(const float* pixels, int w, int h) {
     int id = (int)gTextures.size();
     gTextures.push_back(tex);
     return id;
+}
+
+static int UploadTextureFileRGBA(const std::string& path) {
+    int w = 0;
+    int h = 0;
+    int sourceChannels = 0;
+    unsigned char* bytes = stbi_load(
+        path.c_str(), &w, &h, &sourceChannels, STBI_rgb_alpha);
+    if (bytes == nullptr || w <= 0 || h <= 0) {
+        printf("[FogCard] failed to load texture: %s\n", path.c_str());
+        if (bytes != nullptr) stbi_image_free(bytes);
+        return -1;
+    }
+
+    std::vector<float> rgba((size_t)w * (size_t)h * 4u);
+    for (size_t i = 0; i < (size_t)w * (size_t)h * 4u; ++i) {
+        rgba[i] = (float)bytes[i] / 255.0f;
+    }
+    stbi_image_free(bytes);
+
+    const int textureId = UploadTexture(rgba.data(), w, h);
+    printf("[FogCard] texture: %s (%dx%d, id=%d)\n",
+        path.c_str(), w, h, textureId);
+    return textureId;
+}
+
+static void UploadFogCards(Scene* scene) {
+    cudaFree(dev_fogCards);
+    dev_fogCards = nullptr;
+    g_numFogCards = 0;
+
+    std::vector<FogCard> cards;
+    cards.reserve(scene->fogCards.size());
+    std::unordered_map<std::string, int> textureCache;
+    for (const FogCardConfig& cfg : scene->fogCards) {
+        FogCard card = cfg.card;
+        const auto cached = textureCache.find(cfg.texturePath);
+        if (cached != textureCache.end()) {
+            card.textureId = cached->second;
+        }
+        else {
+            card.textureId = UploadTextureFileRGBA(cfg.texturePath);
+            textureCache[cfg.texturePath] = card.textureId;
+        }
+        if (card.textureId >= 0) cards.push_back(card);
+    }
+
+    g_numFogCards = (int)cards.size();
+    if (g_numFogCards > 0) {
+        cudaMalloc(&dev_fogCards, g_numFogCards * sizeof(FogCard));
+        cudaMemcpy(dev_fogCards, cards.data(),
+            g_numFogCards * sizeof(FogCard), cudaMemcpyHostToDevice);
+    }
+    printf("[FogCard] uploaded %d card(s)\n", g_numFogCards);
 }
 
 // TODO: static variables for device memory, any extra info you need, etc
@@ -1002,6 +1289,7 @@ void pathtraceInit(Scene* scene)
 
     BakeMeshesIntoSceneAndCPUTris(scene);
     UploadTrisToGPU();
+    UploadFogCards(scene);
 
 
     buildAndUploadTriBVH(scene);          
@@ -1083,6 +1371,7 @@ void pathtraceFree()
     cudaFree(dev_geoms);
     cudaFree(dev_materials);
     cudaFree(dev_intersections);
+    cudaFree(dev_fogCards); dev_fogCards = nullptr; g_numFogCards = 0;
 
     cudaFree(dev_tris); dev_tris = nullptr; g_numTris = 0;
 
@@ -1199,6 +1488,7 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
 
         segment.pixelIndex = index;
         segment.remainingBounces = traceDepth;
+        segment.fogCardsProcessed = 0;
     }
 }
 
@@ -1212,6 +1502,7 @@ __global__ void computeIntersections(
     PathSegment* pathSegments,
     Geom* geoms,
     int geoms_size,
+    const Material* materials,
     ShadeableIntersection* intersections,
     const BVHNode* __restrict__ bvhNodes,
     const int* __restrict__ primIdx,
@@ -1223,6 +1514,8 @@ __global__ void computeIntersections(
     if (path_index >= num_paths) return;
 
     const PathSegment seg = pathSegments[path_index];
+    Ray queryRay = seg.ray;
+    float skippedDistance = 0.0f;
     float     bestT = FLT_MAX;
     glm::vec3 bestN = glm::vec3(0.f);
     glm::vec2 bestUV = glm::vec2(0.f);
@@ -1230,55 +1523,85 @@ __global__ void computeIntersections(
     int       bestGeom = -1;
     int       bestMat = -1;
 
+    // Resolve camera-invisible geometry inside this intersection query.  The
+    // old shader-side pass-through consumed one global tracing iteration per
+    // face, so pixels covered by a hidden light card received fewer real
+    // bounces and exposed the card as a rectangular color discontinuity.
+    // Skipping it here keeps the primary-ray bounce budget uniform.
+    const int maxInvisibleSkips = 16;
+    for (int skip = 0; skip < maxInvisibleSkips; ++skip) {
+        bestT = FLT_MAX;
+        bestN = glm::vec3(0.f);
+        bestUV = glm::vec2(0.f);
+        bestTan = glm::vec4(1, 0, 0, 1);
+        bestGeom = -1;
+        bestMat = -1;
+
 #if ENABLE_BVH
-    if (bvhNodes != nullptr && primIdx != nullptr) {
-        traverseBVH(seg.ray, bvhNodes, primIdx, geoms, tris,
-            triNodes, triPrimIdx,
-            bestT, bestGeom, bestN, bestMat, bestUV, bestTan);  
-    }
-    else
+        if (bvhNodes != nullptr && primIdx != nullptr) {
+            traverseBVH(queryRay, bvhNodes, primIdx, geoms, tris,
+                triNodes, triPrimIdx,
+                bestT, bestGeom, bestN, bestMat, bestUV, bestTan);
+        }
+        else
 #endif
-    {
-        bool outside = true; glm::vec3 pTmp, nTmp;
-        for (int i = 0; i < geoms_size; ++i) {
-            const Geom& g = geoms[i];
+        {
+            bool outside = true; glm::vec3 pTmp, nTmp;
+            for (int i = 0; i < geoms_size; ++i) {
+                const Geom& g = geoms[i];
 
-            if (g.type == CUBE) {
-                float t = boxIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
-                if (t > 0.0f && t < bestT) {
-                    bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
-                    bestUV = glm::vec2(0.f);
-                    bestTan = glm::vec4(1, 0, 0, 1);  
+                if (g.type == CUBE) {
+                    float t = boxIntersectionTest(g, queryRay, pTmp, nTmp, outside);
+                    if (t > 0.0f && t < bestT) {
+                        bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
+                        bestUV = glm::vec2(0.f);
+                        bestTan = glm::vec4(1, 0, 0, 1);
+                    }
                 }
-            }
-            else if (g.type == SPHERE) {
-                float t = sphereIntersectionTest(g, seg.ray, pTmp, nTmp, outside);
-                if (t > 0.0f && t < bestT) {
-                    bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
-                    bestUV = glm::vec2(0.f);
-                    bestTan = glm::vec4(1, 0, 0, 1);  
+                else if (g.type == SPHERE) {
+                    float t = sphereIntersectionTest(g, queryRay, pTmp, nTmp, outside);
+                    if (t > 0.0f && t < bestT) {
+                        bestT = t; bestN = nTmp; bestGeom = i; bestMat = g.materialid;
+                        bestUV = glm::vec2(0.f);
+                        bestTan = glm::vec4(1, 0, 0, 1);
+                    }
                 }
-            }
-            else if (g.type == MESH) {
-                if (tris == nullptr) continue;
-                AABB box; box.minB = g.bboxMin; box.maxB = g.bboxMax;
-                if (!intersectAABB(box, seg.ray, bestT)) continue;
+                else if (g.type == MESH) {
+                    if (tris == nullptr) continue;
+                    AABB box; box.minB = g.bboxMin; box.maxB = g.bboxMax;
+                    if (!intersectAABB(box, queryRay, bestT)) continue;
 
-                for (int k = 0; k < g.triCount; ++k) {
-                    const Tri& tr = tris[g.triOffset + k];
-                    float bu, bv;
-                    float tHit = intersectTriangleMT(seg.ray, tr, bu, bv);
-                    if (tHit > 0.0f && tHit < bestT) {
-                        bestT = tHit;
-                        bestN = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
-                        bestGeom = i; bestMat = tr.materialId;
-                        float bw = 1.0f - bu - bv;
-                        bestUV = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
-                        bestTan = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;  
+                    for (int k = 0; k < g.triCount; ++k) {
+                        const Tri& tr = tris[g.triOffset + k];
+                        float bu, bv;
+                        float tHit = intersectTriangleMT(queryRay, tr, bu, bv);
+                        if (tHit > 0.0f && tHit < bestT) {
+                            bestT = tHit;
+                            bestN = glm::normalize(glm::cross(tr.v1 - tr.v0, tr.v2 - tr.v0));
+                            bestGeom = i; bestMat = tr.materialId;
+                            float bw = 1.0f - bu - bv;
+                            bestUV = bw * tr.uv0 + bu * tr.uv1 + bv * tr.uv2;
+                            bestTan = bw * tr.tan0 + bu * tr.tan1 + bv * tr.tan2;
+                        }
                     }
                 }
             }
         }
+
+        if (bestGeom < 0) break;
+
+        if (depth == 0 && materials != nullptr && bestMat >= 0 &&
+            materials[bestMat].cameraVisible == 0) {
+            const float advance = bestT + 2.0e-3f;
+            skippedDistance += advance;
+            queryRay.origin += queryRay.direction * advance;
+            bestGeom = -1;
+            bestMat = -1;
+            continue;
+        }
+
+        bestT += skippedDistance;
+        break;
     }
 
     if (bestGeom < 0) {
@@ -1321,6 +1644,157 @@ __device__ __forceinline__ glm::vec4 sampleTex(
     return glm::vec4(c.x, c.y, c.z, c.w);
 }
 
+// Fog cards are not regular scene geometry. Intersect and alpha-compose all
+// cards once along a primary ray, in front-to-back order and only up to the
+// first opaque surface. This avoids additional BVH traversals per card.
+__device__ __forceinline__ void compositeFogCards(
+    const Ray& ray,
+    float surfaceT,
+    const FogCard* fogCards,
+    int numFogCards,
+    const cudaTextureObject_t* textures,
+    int numTextures,
+    glm::vec3& fogRadiance,
+    float& transmittance)
+{
+    const int MAX_FOG_CARD_HITS = 32;
+    float hitT[MAX_FOG_CARD_HITS];
+    int hitCard[MAX_FOG_CARD_HITS];
+    glm::vec2 hitUV[MAX_FOG_CARD_HITS];
+    int hitCount = 0;
+
+    const int cardCount = min(numFogCards, MAX_FOG_CARD_HITS);
+    for (int i = 0; i < cardCount; ++i) {
+        const FogCard card = fogCards[i];
+        const glm::vec3 normal = glm::cross(card.right, card.up);
+        const float normalLength2 = glm::dot(normal, normal);
+        if (normalLength2 <= 1e-10f) continue;
+
+        const float denom = glm::dot(ray.direction, normal);
+        if (fabsf(denom) <= 1e-7f) continue;
+        const float t = glm::dot(card.center - ray.origin, normal) / denom;
+        if (t <= 1e-4f || t >= surfaceT) continue;
+
+        const glm::vec3 local = ray.origin + t * ray.direction - card.center;
+        const float rightLength2 = glm::dot(card.right, card.right);
+        const float upLength2 = glm::dot(card.up, card.up);
+        const float localX = glm::dot(local, card.right) / rightLength2;
+        const float localY = glm::dot(local, card.up) / upLength2;
+        if (fabsf(localX) > 1.0f || fabsf(localY) > 1.0f) continue;
+
+        const glm::vec2 uv(
+            localX * 0.5f + 0.5f,
+            0.5f - localY * 0.5f);
+
+        // Insertion sort while collecting hits; card counts are intentionally
+        // small, making this cheaper than launching or traversing another BVH.
+        int insert = hitCount;
+        while (insert > 0 && hitT[insert - 1] > t) {
+            hitT[insert] = hitT[insert - 1];
+            hitCard[insert] = hitCard[insert - 1];
+            hitUV[insert] = hitUV[insert - 1];
+            --insert;
+        }
+        hitT[insert] = t;
+        hitCard[insert] = i;
+        hitUV[insert] = uv;
+        ++hitCount;
+    }
+
+    fogRadiance = glm::vec3(0.0f);
+    transmittance = 1.0f;
+    for (int i = 0; i < hitCount; ++i) {
+        const FogCard card = fogCards[hitCard[i]];
+        if (card.textureId < 0 || card.textureId >= numTextures) continue;
+        const float4 sample = tex2D<float4>(
+            textures[card.textureId], hitUV[i].x, hitUV[i].y);
+        const float edgeDistance = fminf(
+            fminf(hitUV[i].x, 1.0f - hitUV[i].x),
+            fminf(hitUV[i].y, 1.0f - hitUV[i].y));
+        float edgeMask = 1.0f;
+        if (card.edgeFade > 1e-5f) {
+            const float edgeT = glm::clamp(
+                edgeDistance / card.edgeFade, 0.0f, 1.0f);
+            edgeMask = edgeT * edgeT * (3.0f - 2.0f * edgeT);
+        }
+        float depthMask = 1.0f;
+        if (card.depthFade > 1e-5f && surfaceT < FLT_MAX * 0.5f) {
+            const float separation = surfaceT - hitT[i];
+            const float fade = glm::clamp(separation / card.depthFade, 0.0f, 1.0f);
+            depthMask = fade * fade * (3.0f - 2.0f * fade);
+        }
+        const float alpha = glm::clamp(
+            sample.w * card.opacity * depthMask * edgeMask, 0.0f, 0.98f);
+        if (alpha <= 1e-4f) continue;
+
+        fogRadiance += transmittance * alpha * card.color;
+        transmittance *= (1.0f - alpha);
+        if (transmittance <= 1e-3f) break;
+    }
+}
+
+// Return the portion of a ray segment that lies inside the configured medium
+// box. Directions are normalized throughout this renderer, so t is a world
+// space distance here.
+__device__ __forceinline__ bool volumeRayInterval(
+    const Ray& ray,
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    float segmentMax,
+    float& tEnter,
+    float& tExit)
+{
+    const float eps = 1e-8f;
+    glm::vec3 invD(
+        1.0f / ((fabsf(ray.direction.x) > eps) ? ray.direction.x : copysignf(eps, ray.direction.x)),
+        1.0f / ((fabsf(ray.direction.y) > eps) ? ray.direction.y : copysignf(eps, ray.direction.y)),
+        1.0f / ((fabsf(ray.direction.z) > eps) ? ray.direction.z : copysignf(eps, ray.direction.z)));
+    glm::vec3 a = (boundsMin - ray.origin) * invD;
+    glm::vec3 b = (boundsMax - ray.origin) * invD;
+    glm::vec3 near3 = glm::min(a, b);
+    glm::vec3 far3 = glm::max(a, b);
+
+    tEnter = fmaxf(0.0f, fmaxf(near3.x, fmaxf(near3.y, near3.z)));
+    tExit = fminf(segmentMax, fminf(far3.x, fminf(far3.y, far3.z)));
+    return tExit > tEnter;
+}
+
+__device__ __forceinline__ float henyeyGreensteinPhase(float cosTheta, float g)
+{
+    const float gg = g * g;
+    const float denom = fmaxf(1e-6f, 1.0f + gg - 2.0f * g * cosTheta);
+    return (1.0f - gg) / (4.0f * PI * denom * sqrtf(denom));
+}
+
+__device__ __forceinline__ glm::vec3 sampleHenyeyGreenstein(
+    const glm::vec3& forward,
+    float g,
+    float u1,
+    float u2)
+{
+    float cosTheta;
+    if (fabsf(g) < 1e-3f) {
+        cosTheta = 1.0f - 2.0f * u1;
+    }
+    else {
+        const float ratio = (1.0f - g * g) / (1.0f - g + 2.0f * g * u1);
+        cosTheta = (1.0f + g * g - ratio * ratio) / (2.0f * g);
+        cosTheta = glm::clamp(cosTheta, -1.0f, 1.0f);
+    }
+
+    const float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+    const float phi = 2.0f * PI * u2;
+    const glm::vec3 w = glm::normalize(forward);
+    const glm::vec3 t = (fabsf(w.z) < 0.999f)
+        ? glm::normalize(glm::cross(glm::vec3(0, 0, 1), w))
+        : glm::normalize(glm::cross(glm::vec3(0, 1, 0), w));
+    const glm::vec3 b = glm::cross(w, t);
+    return glm::normalize(
+        t * (cosf(phi) * sinTheta) +
+        b * (sinf(phi) * sinTheta) +
+        w * cosTheta);
+}
+
 __global__ void shadeMaterial(
     int iter,
     int num_paths,
@@ -1335,7 +1809,17 @@ __global__ void shadeMaterial(
     float envRotation,
     bool hasEnvMap,
     const cudaTextureObject_t* textures, 
-    int numTextures)
+    int numTextures,
+    glm::vec3* image,
+    const FogCard* fogCards,
+    int numFogCards,
+    Camera camera,
+    Geom* geoms,
+    const BVHNode* bvhNodes,
+    const int* primIdx,
+    const Tri* tris,
+    const TriBVHNode* triNodes,
+    const int* triPrimIdx)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_paths) return;
@@ -1344,6 +1828,149 @@ __global__ void shadeMaterial(
     if (pathSegment.remainingBounces <= 0) return;
 
     const ShadeableIntersection isect = shadeableIntersections[idx];
+    const int bouncesDone = traceDepth - pathSegment.remainingBounces;
+    thrust::default_random_engine rng =
+        makeSeededRandomEngine(iter, pathSegment.pixelIndex, pathSegment.remainingBounces);
+    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
+
+    if (bouncesDone == 0 && pathSegment.fogCardsProcessed == 0) {
+        pathSegment.fogCardsProcessed = 1;
+        if (fogCards != nullptr && numFogCards > 0 &&
+            textures != nullptr && image != nullptr) {
+            const float surfaceT = (isect.t > 0.0f) ? isect.t : FLT_MAX;
+            glm::vec3 fogRadiance(0.0f);
+            float fogTransmittance = 1.0f;
+            compositeFogCards(
+                pathSegment.ray,
+                surfaceT,
+                fogCards,
+                numFogCards,
+                textures,
+                numTextures,
+                fogRadiance,
+                fogTransmittance);
+            image[pathSegment.pixelIndex] += pathSegment.color * fogRadiance;
+            pathSegment.color *= fogTransmittance;
+        }
+    }
+
+    // Analog free-flight sampling in a bounded homogeneous medium. A surface
+    // behind the box is reached only by samples that survive the exponential
+    // extinction probability, so transmittance must not be multiplied again.
+    const float sigmaT = camera.volumeSigmaA + camera.volumeSigmaS;
+    if (camera.volumeEnabled && sigmaT > 0.0f) {
+        const float surfaceT = (isect.t > 0.0f) ? isect.t : FLT_MAX;
+        float mediumEnter, mediumExit;
+        if (volumeRayInterval(
+            pathSegment.ray,
+            camera.volumeMin,
+            camera.volumeMax,
+            surfaceT,
+            mediumEnter,
+            mediumExit)) {
+            const float xi = fmaxf(1e-7f, 1.0f - u01(rng));
+            const float freeFlight = -logf(xi) / sigmaT;
+            const float mediumLength = mediumExit - mediumEnter;
+
+            if (freeFlight < mediumLength) {
+                const float scatterT = mediumEnter + freeFlight;
+                const glm::vec3 scatterPoint =
+                    pathSegment.ray.origin + scatterT * pathSegment.ray.direction;
+
+                // The exponential distance PDF cancels sigma_t * Tr. What is
+                // left in path throughput is the single-scattering albedo.
+                const float scalarAlbedo = camera.volumeSigmaS / sigmaT;
+                pathSegment.color *= scalarAlbedo * camera.volumeScatterColor;
+
+                // One-sample NEE toward a large analytic rectangle behind the
+                // clock. Geometry visibility makes all clock openings work as
+                // a distributed source instead of one dominant bright hole.
+                if (camera.volumeLightEnabled && image != nullptr) {
+                    const float su = 2.0f * u01(rng) - 1.0f;
+                    const float sv = 2.0f * u01(rng) - 1.0f;
+                    const glm::vec3 lightPoint = camera.volumeLightCenter +
+                        su * camera.volumeLightU + sv * camera.volumeLightV;
+                    glm::vec3 toLight = lightPoint - scatterPoint;
+                    const float dist2 = glm::dot(toLight, toLight);
+
+                    if (dist2 > 1e-6f) {
+                        const float distToLight = sqrtf(dist2);
+                        const glm::vec3 wi = toLight / distToLight;
+                        const glm::vec3 lightCross = glm::cross(
+                            camera.volumeLightU, camera.volumeLightV);
+                        const float quarterArea = glm::length(lightCross);
+                        const float lightArea = 4.0f * quarterArea;
+                        const glm::vec3 lightNormal = (quarterArea > 1e-8f)
+                            ? lightCross / quarterArea
+                            : glm::vec3(0.0f, 0.0f, 1.0f);
+                        const float cosAtLight = fabsf(glm::dot(lightNormal, -wi));
+
+                        bool occluded = false;
+                        if (lightArea > 1e-6f && cosAtLight > 1e-5f &&
+                            bvhNodes != nullptr && primIdx != nullptr) {
+                            Ray shadowRay;
+                            shadowRay.origin = scatterPoint + wi * 2e-3f;
+                            shadowRay.direction = wi;
+                            float shadowT = distToLight - 4e-3f;
+                            int shadowGeom = -1;
+                            int shadowMat = -1;
+                            glm::vec3 shadowN(0.0f);
+                            glm::vec2 shadowUV(0.0f);
+                            glm::vec4 shadowTan(1, 0, 0, 1);
+                            traverseBVH(
+                                shadowRay, bvhNodes, primIdx, geoms, tris,
+                                triNodes, triPrimIdx,
+                                shadowT, shadowGeom, shadowN, shadowMat,
+                                shadowUV, shadowTan);
+                            occluded = shadowGeom >= 0 && shadowT < distToLight - 4e-3f;
+                        }
+
+                        if (!occluded && lightArea > 1e-6f && cosAtLight > 1e-5f) {
+                            Ray lightRay;
+                            lightRay.origin = scatterPoint;
+                            lightRay.direction = wi;
+                            float lightMediumEnter, lightMediumExit;
+                            float distanceInMedium = 0.0f;
+                            if (volumeRayInterval(
+                                lightRay,
+                                camera.volumeMin,
+                                camera.volumeMax,
+                                distToLight,
+                                lightMediumEnter,
+                                lightMediumExit)) {
+                                distanceInMedium = lightMediumExit - lightMediumEnter;
+                            }
+                            const float transmittance = expf(-sigmaT * distanceInMedium);
+                            // Both directions point away from the scattering
+                            // point in the path integral convention. For a
+                            // rear light, dot(ray.direction, wi) represents
+                            // forward scattering toward the camera.
+                            const float phase = henyeyGreensteinPhase(
+                                glm::dot(pathSegment.ray.direction, wi),
+                                camera.volumeG);
+                            const float geometryOverPdf =
+                                cosAtLight * lightArea / dist2;
+                            const glm::vec3 direct = pathSegment.color *
+                                camera.volumeLightRadiance *
+                                (phase * geometryOverPdf * transmittance);
+                            image[pathSegment.pixelIndex] += direct;
+                        }
+                    }
+                }
+
+                const glm::vec3 newDirection = sampleHenyeyGreenstein(
+                    pathSegment.ray.direction,
+                    camera.volumeG,
+                    u01(rng),
+                    u01(rng));
+                pathSegment.ray.origin = scatterPoint + newDirection * 2e-3f;
+                pathSegment.ray.direction = newDirection;
+                pathSegment.remainingBounces--;
+                return;
+            }
+        }
+    }
+
     if (isect.t <= 0.0f) {
         if (hasEnvMap) {
             pathSegment.color *= sampleEnvMap(
@@ -1360,7 +1987,6 @@ __global__ void shadeMaterial(
     }
 
     const Material material = materials[isect.materialId];
-    const int bouncesDone = traceDepth - pathSegment.remainingBounces;
     glm::vec3 p = pathSegment.ray.origin + isect.t * pathSegment.ray.direction;
 
     // Camera-invisible light cards are transparent only to primary rays. They
@@ -1394,10 +2020,6 @@ __global__ void shadeMaterial(
 
     glm::vec3 n = glm::normalize(isect.surfaceNormal);
     if (glm::dot(n, -pathSegment.ray.direction) < 0.0f) n = -n;
-
-    thrust::default_random_engine rng =
-        makeSeededRandomEngine(iter, pathSegment.pixelIndex, pathSegment.remainingBounces);
-    thrust::uniform_real_distribution<float> u01(0.0f, 1.0f);
 
     if (material.hasRefractive > 0.0f) {
         if (rrEnabled && bouncesDone >= rrMinDepth) {
@@ -1665,6 +2287,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_paths,
             dev_geoms,
             hst_scene->geoms.size(),
+            dev_materials,
             dev_intersections,
 #if ENABLE_BVH
             (gEnableBVH ? dev_bvhNodes : nullptr),
@@ -1746,7 +2369,22 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             gEnvRotation,
             gHasEnvMap,
             dev_textures,           
-            (int)gTextures.size()
+            (int)gTextures.size(),
+            dev_image,
+            dev_fogCards,
+            g_numFogCards,
+            cam,
+            dev_geoms,
+#if ENABLE_BVH
+            (gEnableBVH ? dev_bvhNodes : nullptr),
+            (gEnableBVH ? dev_primIndices : nullptr),
+#else
+            nullptr,
+            nullptr,
+#endif
+            dev_tris,
+            (gEnableTriBVH ? dev_triBVHNodes : nullptr),
+            (gEnableTriBVH ? dev_triPrimIdx : nullptr)
             );
 
         checkCUDAError("shadeMaterial");
@@ -1809,7 +2447,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
     ///////////////////////////////////////////////////////////////////////////
 
     // Send results to OpenGL buffer for rendering
-    sendImageToPBO<<<blocksPerGrid2d, blockSize2d>>>(pbo, cam.resolution, iter, dev_image);
+    sendImageToPBO<<<blocksPerGrid2d, blockSize2d>>>(pbo, cam.resolution, iter, dev_image, cam);
 
     // Retrieve image from GPU
     cudaMemcpy(hst_scene->state.image.data(), dev_image,
