@@ -17,6 +17,7 @@
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -210,7 +211,19 @@ bool init()
         exit(EXIT_FAILURE);
     }
 
-    window = glfwCreateWindow(width, height, "CIS 565 Path Tracer", NULL, NULL);
+    // The render resolution can be much taller or wider than the monitor.
+    // Keep the interactive preview window independent from the output image.
+    int previewWidth = 1280;
+    int previewHeight = 900;
+    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor())
+    {
+        int workX, workY, workWidth, workHeight;
+        glfwGetMonitorWorkarea(monitor, &workX, &workY, &workWidth, &workHeight);
+        previewWidth = std::min(previewWidth, workWidth - 80);
+        previewHeight = std::min(previewHeight, workHeight - 80);
+    }
+
+    window = glfwCreateWindow(previewWidth, previewHeight, "CIS 565 Path Tracer", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -478,15 +491,38 @@ void mainLoop()
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
         glBindTexture(GL_TEXTURE_2D, displayImage);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        glClear(GL_COLOR_BUFFER_BIT);
 
         // Binding GL_PIXEL_UNPACK_BUFFER back to default
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
-        // VAO, shader program, and texture already bound
+        int framebufferWidth = 0;
+        int framebufferHeight = 0;
+        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+        if (framebufferWidth <= 0 || framebufferHeight <= 0)
+        {
+            glfwWaitEvents();
+            continue;
+        }
+
+        // Clear the complete window first so the unused area becomes letterboxing.
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
+        glClearColor(0.02f, 0.02f, 0.025f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Fit the render texture inside the framebuffer without changing its aspect ratio.
+        const float previewScale = std::min(
+            static_cast<float>(framebufferWidth) / static_cast<float>(width),
+            static_cast<float>(framebufferHeight) / static_cast<float>(height));
+        const int previewViewportWidth = std::max(1, static_cast<int>(width * previewScale));
+        const int previewViewportHeight = std::max(1, static_cast<int>(height * previewScale));
+        const int previewOffsetX = (framebufferWidth - previewViewportWidth) / 2;
+        const int previewOffsetY = (framebufferHeight - previewViewportHeight) / 2;
+
+        glViewport(previewOffsetX, previewOffsetY, previewViewportWidth, previewViewportHeight);
         glDrawElements(GL_TRIANGLES, 6,  GL_UNSIGNED_SHORT, 0);
 
-        // Render ImGui Stuff
+        // ImGui should still use the complete framebuffer.
+        glViewport(0, 0, framebufferWidth, framebufferHeight);
         RenderImGui();
 
         glfwSwapBuffers(window);

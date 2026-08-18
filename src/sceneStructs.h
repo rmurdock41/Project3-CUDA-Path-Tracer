@@ -55,6 +55,7 @@ struct Material
     float emittance;
     float roughness;
     float metallic = 0.0f;
+    int cameraVisible = 1;  // 0: primary rays pass through; secondary rays still see the light
 
     int albedoTexId = -1;
     int metallicRoughnessTexId = -1;
